@@ -78,7 +78,7 @@ static func _merge_with_defaults(specific: Dictionary, defaults: Dictionary) -> 
 const TYPES = {
 	"Sand": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#E2C08D", "#D4AF37", "#C2B280"],
+		"colors": ["#fbffce", "#fbd439", "#f09432"],
 		"solid": true,
 		"density": 1.5,
 		"interactions": {
@@ -100,7 +100,7 @@ const TYPES = {
 	},
 	"Water": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#4FA4F4", "#2E86C1", "#5DADE2"],
+		"colors": ["#5af0f7", "#08a0c0", "#165a7d"],
 		"liquid": true,
 		"density": 1.0,
 		"interactions": {
@@ -122,7 +122,7 @@ const TYPES = {
 	},
 	"Stone": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#808080", "#6E6E6E", "#595959"],
+		"colors": ["#6f288b", "#260e3e", "#c635bc"],
 		"solid": true,
 		"density": 2.0,
 		"interactions": {
@@ -139,7 +139,7 @@ const TYPES = {
 	},
 	"Fire": {
 		"initialGravity": Vector2(0, -1),
-		"colors": ["#FF4500DD", "#FFA500DD", "#FFD700DD"],
+		"colors": ["#fbd439", "#f09432", "#dc532d"],
 		"density": 0.3,
 		"interactions": {
 			"Plant": {
@@ -163,7 +163,7 @@ const TYPES = {
 	},
 	"Smoke": {
 		"initialGravity": Vector2(0, -0.5),
-		"colors": ["#55555588", "#66666688", "#77777788"],
+		"colors": ["#ff9cc9", "#6f288b", "#260e3e"],
 		"density": 0.1,
 		"interactions": {},
 		"idleBehaviors": {
@@ -179,7 +179,7 @@ const TYPES = {
 	},
 	"Steam": {
 		"initialGravity": Vector2(0, -1.5),
-		"colors": ["#DDDDDD66", "#CCCCCC66", "#EEEEEE66"],
+		"colors": ["#fbffce", "#5af0f7", "#25e2c0"],
 		"density": 0.05,
 		"interactions": {},
 		"idleBehaviors": {
@@ -195,7 +195,7 @@ const TYPES = {
 	},
 	"Plant": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#228B22", "#2ECC71", "#27AE60"],
+		"colors": ["#b4dc25", "#26a630", "#25e2c0"],
 		"solid": true,
 		"density": 0.8,
 		"interactions": {
@@ -212,7 +212,7 @@ const TYPES = {
 	},
 	"Ash": {
 		"initialGravity": Vector2(0, 0.3),
-		"colors": ["#2F2F2F", "#3E3E3E", "#1C1C1C"],
+		"colors": ["#a12536", "#260e3e", "#165a7d"],
 		"density": 0.5,
 		"interactions": {},
 		"idleBehaviors": {
@@ -228,7 +228,7 @@ const TYPES = {
 	},
 	"Lava": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#FF4500DD", "#FF2200DD", "#CC1100DD"],
+		"colors": ["#f43666", "#dc532d", "#a12536"],
 		"liquid": true,
 		"density": 2.5,
 		"interactions": {},

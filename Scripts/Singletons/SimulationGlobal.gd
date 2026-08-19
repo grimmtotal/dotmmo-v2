@@ -38,6 +38,13 @@ const MAX_TICKS_PER_FRAME: int = 2
 # time even when the tick rate drops. One byte caps a lifespan at ~4.2s.
 const MAX_LIFE: int = 255
 
+# A cell paints black instead of its material colour when it sits on the
+# boundary of a same-type blob (touching both a same-type neighbour and a
+# different one). Interior cells and lone particles keep their own colour, so
+# each connected group reads as a single outlined shape rather than a pile of
+# individually outlined grains.
+const OUTLINE_COLOUR: int = 0xFF000000
+
 signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
@@ -84,6 +91,10 @@ var _pw: int
 var _ph: int
 var _cells: int
 
+# The 8 flat-index offsets to a cell's neighbours, precomputed once _pw is
+# known so the outline repaint never allocates in the hot path.
+var _nbr_off: PackedInt32Array
+
 var _tick: int = 0
 var _tick_hz: float = TICK_HZ_MAX
 var _life_step: int = 1
@@ -99,6 +110,12 @@ func _ready() -> void:
 	_pw = _w + 2
 	_ph = _h + 2
 	_cells = _pw * _ph
+
+	_nbr_off = PackedInt32Array([
+		-_pw - 1, -_pw, -_pw + 1,
+		-1, 1,
+		_pw - 1, _pw, _pw + 1,
+	])
 
 	_active.resize(8192)
 	clearAll()
@@ -549,8 +566,7 @@ func _place(i: int, id: int) -> void:
 	_flow[i] = randi() & 1
 	_clock[i] = _tick
 
-	_pixels.encode_u32(i * 4, _t_colours[_t_colour_base[id] + variant])
-	_pixels_dirty = true
+	_repaint_neighbourhood(i)
 
 	_count += 1
 	_activate(i)
@@ -560,8 +576,7 @@ func _erase(i: int) -> void:
 	_type[i] = EMPTY
 	_life[i] = 0
 
-	_pixels.encode_u32(i * 4, 0)
-	_pixels_dirty = true
+	_repaint_neighbourhood(i)
 
 	_count -= 1
 
@@ -576,9 +591,8 @@ func _relocate(from: int, to: int) -> void:
 	_type[from] = EMPTY
 	_life[from] = 0
 
-	_pixels.encode_u32(to * 4, _pixels.decode_u32(from * 4))
-	_pixels.encode_u32(from * 4, 0)
-	_pixels_dirty = true
+	_repaint_neighbourhood(to)
+	_repaint_neighbourhood(from)
 
 	_activate(to)
 	_wake_around(from)
@@ -603,15 +617,48 @@ func _swap(a: int, b: int) -> void:
 	_clock[a] = _tick
 	_clock[b] = _tick
 
-	var colour_a: int = _pixels.decode_u32(a * 4)
-	_pixels.encode_u32(a * 4, _pixels.decode_u32(b * 4))
-	_pixels.encode_u32(b * 4, colour_a)
-	_pixels_dirty = true
+	_repaint_neighbourhood(a)
+	_repaint_neighbourhood(b)
 
 	_activate(a)
 	_activate(b)
 	_wake_around(a)
 	_wake_around(b)
+
+
+## Recomputes cell `i`'s pixel plus its 8 neighbours', since a type change at
+## `i` can flip any of them between "interior" and "boundary" of their own
+## same-type blob.
+func _repaint_neighbourhood(i: int) -> void:
+	_repaint_cell(i)
+	for off: int in _nbr_off:
+		_repaint_cell(i + off)
+
+
+## A particle paints its material colour unless it both touches a same-type
+## neighbour and a differing one (empty, wall, or another material), in which
+## case it's on the edge of its group's shape and paints the outline colour
+## instead. A lone particle (no same-type neighbour) always keeps its colour.
+func _repaint_cell(i: int) -> void:
+	var t: int = _type[i]
+	if t < FIRST_TYPE:
+		_pixels.encode_u32(i * 4, 0)
+		_pixels_dirty = true
+		return
+
+	var has_same: bool = false
+	var has_diff: bool = false
+	for off: int in _nbr_off:
+		if _type[i + off] == t:
+			has_same = true
+		else:
+			has_diff = true
+		if has_same and has_diff:
+			break
+
+	var colour: int = OUTLINE_COLOUR if (has_same and has_diff) else _t_colours[_t_colour_base[t] + _variant[i]]
+	_pixels.encode_u32(i * 4, colour)
+	_pixels_dirty = true
 
 
 # --------------------------------------------------------------- active list
