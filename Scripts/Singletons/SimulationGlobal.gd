@@ -69,6 +69,8 @@ var _t_life: PackedByteArray
 var _t_variants: PackedByteArray
 var _t_colour_base: PackedInt32Array
 var _t_colours: PackedInt64Array
+var _t_spread_x: PackedInt32Array
+var _t_spread_y: PackedInt32Array
 
 # What a material spawns when its life timer expires. Most materials spawn
 # nothing; the few that do (Fire -> Smoke) are stored here.
@@ -120,6 +122,8 @@ func _build_types() -> void:
 	_t_life.resize(total)
 	_t_variants.resize(total)
 	_t_colour_base.resize(total)
+	_t_spread_x.resize(total)
+	_t_spread_y.resize(total)
 
 	_react_mask.resize(65536)
 	_react_mask.fill(0)
@@ -149,6 +153,9 @@ func _configure_type(id: int, config: Dictionary) -> void:
 	_t_solid[id] = 1 if solid else 0
 	_t_liquid[id] = 1 if liquid else 0
 	_t_density[id] = float(config.get("density", 1.0))
+	var spread: Vector2i = config.get("spread", Vector2i.ZERO)
+	_t_spread_x[id] = spread.x
+	_t_spread_y[id] = spread.y
 	_t_life[id] = _lifespan_ticks(config)
 	_t_death_spawn[id] = _death_spawn(config)
 
@@ -265,14 +272,8 @@ func spawnParticle(type_name: String, pos: Vector2) -> bool:
 func spawnAt(id: int, x: int, y: int) -> bool:
 	if x < 0 or y < 0 or x >= _w or y >= _h:
 		return false
-
 	var i: int = (y + 1) * _pw + (x + 1)
-	if _type[i] != EMPTY:
-		return false
-
-	_place(i, id)
-	_wake_around(i)
-	return true
+	return _spawn(i, id)
 
 
 func despawnParticle(pos: Vector2) -> int:
@@ -442,7 +443,7 @@ func _step() -> void:
 					_erase(i)
 				else:
 					_erase(i)
-					_place(i, death_spawn[0])
+					_spawn(i, death_spawn[0])
 					for extra: int in range(1, death_spawn.size()):
 						_spawn_beside(i, death_spawn[extra])
 				_wake_around(i)
@@ -538,7 +539,7 @@ func _apply_reaction(i: int, key: int) -> bool:
 			return true
 
 		# The first product takes over the vacated cell; any others go beside it.
-		_place(i, spawn[0])
+		_spawn(i, spawn[0])
 		for extra: int in range(1, spawn.size()):
 			_spawn_beside(i, spawn[extra])
 		_wake_around(i)
@@ -552,18 +553,14 @@ func _apply_reaction(i: int, key: int) -> bool:
 
 func _spawn_beside(i: int, id: int) -> void:
 	var pw: int = _pw
-	if _type[i - pw] == EMPTY:
-		_place(i - pw, id)
-		_wake_around(i - pw)
-	elif _type[i - 1] == EMPTY:
-		_place(i - 1, id)
-		_wake_around(i - 1)
-	elif _type[i + 1] == EMPTY:
-		_place(i + 1, id)
-		_wake_around(i + 1)
-	elif _type[i + pw] == EMPTY:
-		_place(i + pw, id)
-		_wake_around(i + pw)
+	# Try each orthogonal neighbour in turn; `_spawn` applies the material's
+	# spread and handles the empty check + wake, so the first one that lands
+	# wins.
+	if _spawn(i - pw, id) \
+			or _spawn(i - 1, id) \
+			or _spawn(i + 1, id) \
+			or _spawn(i + pw, id):
+		return
 
 
 # ------------------------------------------------------------ cell primitives
@@ -579,6 +576,33 @@ func _place(i: int, id: int) -> void:
 
 	_count += 1
 	_activate_if_exposed(i)
+
+
+## Spawns a particle at cell `i`, jittered by the material's spread range.
+##
+## Every spawn path (brush, reactions, death spawns) goes through here, so a
+## non-zero `spread` scatters products the same way everywhere. If the jittered
+## target is occupied, the spawn falls back to the original cell so a reaction
+## never silently loses a product; only when both are occupied does it give up.
+func _spawn(i: int, id: int) -> bool:
+	var target: int = i
+	var sx: int = _t_spread_x[id]
+	var sy: int = _t_spread_y[id]
+	if sx != 0 or sy != 0:
+		var x: int = (i % _pw) - 1
+		var y: int = (i / _pw) - 1
+		x = clampi(x + randi_range(-sx, sx), 0, _w - 1)
+		y = clampi(y + randi_range(-sy, sy), 0, _h - 1)
+		target = (y + 1) * _pw + (x + 1)
+		if _type[target] != EMPTY:
+			target = i
+
+	if _type[target] != EMPTY:
+		return false
+
+	_place(target, id)
+	_wake_around(target)
+	return true
 
 
 func _erase(i: int) -> void:

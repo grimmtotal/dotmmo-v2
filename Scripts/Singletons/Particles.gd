@@ -6,6 +6,7 @@ const DEFAULTS = {
 	"solid": false,
 	"liquid": false,
 	"density": 1.0,
+	"spread": Vector2i(0, 0),
 	"interactions": {},
 	"idleBehaviors": {
 		"changeVelocity": null # Vector2
@@ -139,6 +140,7 @@ const TYPES = {
 	},
 	"Fire": {
 		"initialGravity": Vector2(0, -1),
+		"spread": Vector2(2,2),
 		"colors": ["#ff3b30", "#ff9500", "#ffcc00"], # Red-Orange, Orange, Yellow
 		"density": 0.3,
 		"interactions": {

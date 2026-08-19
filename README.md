@@ -59,8 +59,6 @@ Everything visual lives in `Scripts/Singletons/Global.gd`:
 |---|---|
 | `WORLD_PIXEL_SCALE` | Screen pixels per cell — the one number to change to try a different particle size |
 | `WORLD_PIXELS` | How big the world is on screen; `WORLD_GRID_SIZE` is derived from it |
-| `OUTLINE_PIXELS` | Outline thickness, worth raising alongside the scale |
-| `GROUP_OUTLINE` | Off boxes every particle individually instead of outlining groups |
 
 `WORLD_GRID_SIZE` is derived (`WORLD_PIXELS / WORLD_PIXEL_SCALE`), so changing the scale alone keeps the world the same size on screen and adjusts the cell count to match. Simulation cost scales with cell count, so it drops fast as the scale goes up: at 8px the world is 250×250 cells, a sixteenth of the cost of the same world at 2px.
 

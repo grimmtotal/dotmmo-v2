@@ -3,9 +3,9 @@ extends Node2D
 ## Displays the simulation's cells as a single quad, coloured on the GPU.
 ##
 ## The sprite's texture is the simulation's raw type buffer (R8); a shader maps
-## type + variant to a palette colour and paints the black outline inside each
-## cell's own block. The CPU side never touches colours at all: it just
-## re-uploads the two byte buffers when the simulation reports a change.
+## type + variant to a palette colour, painting each cell as a flat coloured
+## block. The CPU side never touches colours at all: it just re-uploads the two
+## byte buffers when the simulation reports a change.
 
 const CELL_SHADER := preload("res://Shaders/WorldCells.gdshader")
 
@@ -31,9 +31,6 @@ func _ready() -> void:
 	material.shader = CELL_SHADER
 	material.set_shader_parameter("variant_tex", _variant_texture)
 	material.set_shader_parameter("palette_tex", ImageTexture.create_from_image(SimulationGlobal.buildPaletteImage()))
-	material.set_shader_parameter("cell_pixels", float(scale))
-	material.set_shader_parameter("outline_pixels", float(Global.OUTLINE_PIXELS))
-	material.set_shader_parameter("group_outline", Global.GROUP_OUTLINE)
 
 	_sprite = Sprite2D.new()
 	_sprite.texture = _type_texture

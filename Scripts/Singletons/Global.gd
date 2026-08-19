@@ -13,13 +13,3 @@ const WORLD_PIXEL_SCALE: int = 8
 const WORLD_PIXELS: int = 2000
 
 const WORLD_GRID_SIZE: int = WORLD_PIXELS / WORLD_PIXEL_SCALE
-
-## Thickness of the black outline drawn inside a cell, in screen pixels. Worth
-## raising alongside WORLD_PIXEL_SCALE so the outline keeps its weight.
-const OUTLINE_PIXELS: int = 1
-
-## Outline each connected group of one material as a single silhouette, rather
-## than boxing every particle in it individually. A particle with no same-type
-## neighbour is still fully outlined on its own, since every side of it faces
-## something different.
-const GROUP_OUTLINE: bool = true
