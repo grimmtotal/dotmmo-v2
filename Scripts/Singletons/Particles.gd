@@ -78,7 +78,7 @@ static func _merge_with_defaults(specific: Dictionary, defaults: Dictionary) -> 
 const TYPES = {
 	"Sand": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#fbffce", "#fbd439", "#f09432"],
+		"colors": ["#fbd439"], # Golden Yellow
 		"solid": true,
 		"density": 1.5,
 		"interactions": {
@@ -100,7 +100,7 @@ const TYPES = {
 	},
 	"Water": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#5af0f7", "#08a0c0", "#165a7d"],
+		"colors": ["#5af0f7", "#08a0c0"], # Light Cyan, Cyan Blue
 		"liquid": true,
 		"density": 1.0,
 		"interactions": {
@@ -122,7 +122,7 @@ const TYPES = {
 	},
 	"Stone": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#6f288b", "#260e3e", "#c635bc"],
+		"colors": ["#165a7d", "#260e3e"], # Dark Blue, Deep Violet
 		"solid": true,
 		"density": 2.0,
 		"interactions": {
@@ -139,7 +139,7 @@ const TYPES = {
 	},
 	"Fire": {
 		"initialGravity": Vector2(0, -1),
-		"colors": ["#fbd439", "#f09432", "#dc532d"],
+		"colors": ["#f09432", "#dc532d"], # Orange, Burnt Orange
 		"density": 0.3,
 		"interactions": {
 			"Plant": {
@@ -163,7 +163,7 @@ const TYPES = {
 	},
 	"Smoke": {
 		"initialGravity": Vector2(0, -0.5),
-		"colors": ["#ff9cc9", "#6f288b", "#260e3e"],
+		"colors": ["#6f288b"], # Purple
 		"density": 0.1,
 		"interactions": {},
 		"idleBehaviors": {
@@ -179,7 +179,7 @@ const TYPES = {
 	},
 	"Steam": {
 		"initialGravity": Vector2(0, -1.5),
-		"colors": ["#fbffce", "#5af0f7", "#25e2c0"],
+		"colors": ["#fbffce"], # Pale Yellow
 		"density": 0.05,
 		"interactions": {},
 		"idleBehaviors": {
@@ -195,7 +195,7 @@ const TYPES = {
 	},
 	"Plant": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#b4dc25", "#26a630", "#25e2c0"],
+		"colors": ["#b4dc25", "#26a630"], # Lime Green, Green
 		"solid": true,
 		"density": 0.8,
 		"interactions": {
@@ -212,7 +212,7 @@ const TYPES = {
 	},
 	"Ash": {
 		"initialGravity": Vector2(0, 0.3),
-		"colors": ["#a12536", "#260e3e", "#165a7d"],
+		"colors": ["#260e3e"], # Deep Violet
 		"density": 0.5,
 		"interactions": {},
 		"idleBehaviors": {
@@ -228,7 +228,7 @@ const TYPES = {
 	},
 	"Lava": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#f43666", "#dc532d", "#a12536"],
+		"colors": ["#f43666", "#a12536"], # Crimson Pink, Dark Red
 		"liquid": true,
 		"density": 2.5,
 		"interactions": {},

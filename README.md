@@ -27,27 +27,29 @@ Every particle color comes from this fixed 16-color palette (`Scripts/Singletons
 
 ### Particle color assignments
 
-Each particle type picks 3 colors from the palette above for its grain-to-grain variation:
+Each particle type uses at most two colors from the palette — one where the material reads as uniform, two where a little grain-to-grain variation helps it feel like a substance rather than a flat fill:
 
 | Particle | Colors |
 |---|---|
-| Sand | `#fbffce` Pale Yellow, `#fbd439` Golden Yellow, `#f09432` Orange |
-| Water | `#5af0f7` Light Cyan, `#08a0c0` Cyan Blue, `#165a7d` Dark Blue |
-| Stone | `#6f288b` Purple, `#260e3e` Deep Violet, `#c635bc` Magenta |
-| Fire | `#fbd439` Golden Yellow, `#f09432` Orange, `#dc532d` Burnt Orange |
-| Smoke | `#ff9cc9` Pink, `#6f288b` Purple, `#260e3e` Deep Violet |
-| Steam | `#fbffce` Pale Yellow, `#5af0f7` Light Cyan, `#25e2c0` Turquoise |
-| Plant | `#b4dc25` Lime Green, `#26a630` Green, `#25e2c0` Turquoise |
-| Ash | `#a12536` Dark Red, `#260e3e` Deep Violet, `#165a7d` Dark Blue |
-| Lava | `#f43666` Crimson Pink, `#dc532d` Burnt Orange, `#a12536` Dark Red |
+| Sand | `#fbd439` Golden Yellow |
+| Water | `#5af0f7` Light Cyan, `#08a0c0` Cyan Blue |
+| Stone | `#165a7d` Dark Blue, `#260e3e` Deep Violet |
+| Plant | `#b4dc25` Lime Green, `#26a630` Green |
+| Fire | `#f09432` Orange, `#dc532d` Burnt Orange |
+| Lava | `#f43666` Crimson Pink, `#a12536` Dark Red |
+| Smoke | `#6f288b` Purple |
+| Steam | `#fbffce` Pale Yellow |
+| Ash | `#260e3e` Deep Violet |
 
-## Particle group outlines
+The palette has no true neutrals, so the dark materials borrow from the blues and violets: Stone and Ash share Deep Violet, which reads fine in practice since Stone is static terrain and Ash falls and despawns.
 
-Particles of the same type that are touching (including diagonally) are treated as one group. Cells on the edge of a group — the ones touching both a same-type neighbor and something else (empty space, a wall, or a different material) — render as a black outline instead of their material color. Interior cells keep their normal color, and a lone particle with no same-type neighbor is left uncolored by the outline (it just shows its own color).
+## Cell size and particle outlines
 
-Because this only depends on each cell's immediate neighbors, it falls out correctly if a group splits apart: each resulting piece gets its own outline around its own shape, with no extra bookkeeping needed.
+Cells are drawn as 8×8 pixel blocks (`WORLD_PIXEL_SCALE` in `Scripts/Singletons/Global.gd`). At that size there is room to draw an outline *inside* a cell, so every particle gets its own 1px black border while the middle keeps the material color. `WORLD_GRID_SIZE` is 250, which keeps the world the same 2000×2000 pixels it was at 1000 cells of 2px — with a sixteenth of the cells to simulate and upload.
 
-Both the palette coloring and the outline are computed entirely on the GPU (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader does the palette lookup plus the 8-neighbor boundary test per cell. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+The rendering is entirely GPU-side (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader figures out from each screen pixel's position within its cell whether it lands in the outline ring or the colored interior. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+
+`WorldRenderer` exposes two knobs for this: `outline_pixels` (border thickness) and `group_outline`. With `group_outline` on, an edge is only drawn where the neighboring cell holds something different, so a connected clump of one material is outlined as a single silhouette instead of every particle being boxed individually — the group behavior from earlier, but now with the interior color preserved. It's off by default.
 
 ## Performance: skipping fully-surrounded particles
 
