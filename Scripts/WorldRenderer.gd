@@ -1,13 +1,19 @@
 extends Node2D
 
-## Displays the simulation's RGBA buffer as a single texture.
+## Displays the simulation's cells as a single quad, coloured on the GPU.
 ##
-## The simulation keeps its pixel buffer up to date as cells change, so there is
-## no per-particle work here at all: this just uploads the buffer when something
-## actually moved.
+## The sprite's texture is the simulation's raw type buffer (R8); a shader maps
+## type + variant to a palette colour and draws the black outline around each
+## connected same-type group by comparing a cell against its 8 neighbours. The
+## CPU side never touches colours at all: it just re-uploads the two byte
+## buffers when the simulation reports a change.
 
-var _image: Image
-var _texture: ImageTexture
+const CELL_SHADER := preload("res://Shaders/WorldCells.gdshader")
+
+var _type_image: Image
+var _variant_image: Image
+var _type_texture: ImageTexture
+var _variant_texture: ImageTexture
 var _sprite: Sprite2D
 var _size: Vector2i
 
@@ -15,14 +21,21 @@ var _size: Vector2i
 func _ready() -> void:
 	_size = SimulationGlobal.getPaddedSize()
 
-	_image = Image.create(_size.x, _size.y, false, Image.FORMAT_RGBA8)
-	_image.fill(Color.TRANSPARENT)
-	_texture = ImageTexture.create_from_image(_image)
+	_type_image = Image.create_from_data(_size.x, _size.y, false, Image.FORMAT_R8, SimulationGlobal.getTypeCells())
+	_variant_image = Image.create_from_data(_size.x, _size.y, false, Image.FORMAT_R8, SimulationGlobal.getVariantCells())
+	_type_texture = ImageTexture.create_from_image(_type_image)
+	_variant_texture = ImageTexture.create_from_image(_variant_image)
+
+	var material := ShaderMaterial.new()
+	material.shader = CELL_SHADER
+	material.set_shader_parameter("variant_tex", _variant_texture)
+	material.set_shader_parameter("palette_tex", ImageTexture.create_from_image(SimulationGlobal.buildPaletteImage()))
 
 	var scale: int = Global.WORLD_PIXEL_SCALE
 
 	_sprite = Sprite2D.new()
-	_sprite.texture = _texture
+	_sprite.texture = _type_texture
+	_sprite.material = material
 	_sprite.centered = false
 	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_sprite.scale = Vector2(scale, scale)
@@ -33,10 +46,12 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	if not SimulationGlobal.consumePixelsDirty():
+	if not SimulationGlobal.consumeCellsDirty():
 		return
 
-	# Passed straight through: Packed arrays are copy-on-write, so the buffer is
-	# only copied once, into the image.
-	_image.set_data(_size.x, _size.y, false, Image.FORMAT_RGBA8, SimulationGlobal.getPixels())
-	_texture.update(_image)
+	# Passed straight through: Packed arrays are copy-on-write, so each buffer
+	# is only copied once, into its image, then uploaded.
+	_type_image.set_data(_size.x, _size.y, false, Image.FORMAT_R8, SimulationGlobal.getTypeCells())
+	_variant_image.set_data(_size.x, _size.y, false, Image.FORMAT_R8, SimulationGlobal.getVariantCells())
+	_type_texture.update(_type_image)
+	_variant_texture.update(_variant_image)

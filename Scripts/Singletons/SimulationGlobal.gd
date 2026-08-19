@@ -38,13 +38,6 @@ const MAX_TICKS_PER_FRAME: int = 2
 # time even when the tick rate drops. One byte caps a lifespan at ~4.2s.
 const MAX_LIFE: int = 255
 
-# A cell paints black instead of its material colour when it sits on the
-# boundary of a same-type blob (touching both a same-type neighbour and a
-# different one). Interior cells and lone particles keep their own colour, so
-# each connected group reads as a single outlined shape rather than a pile of
-# individually outlined grains.
-const OUTLINE_COLOUR: int = 0xFF000000
-
 signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
@@ -59,9 +52,10 @@ var _active: PackedInt32Array
 var _active_n: int = 0
 var _queued: PackedByteArray
 
-# --- Render target: padded RGBA8, kept in sync as cells change ---
-var _pixels: PackedByteArray
-var _pixels_dirty: bool = true
+# The renderer reads `_type` and `_variant` directly (uploaded as textures and
+# coloured on the GPU), so the simulation does no pixel work at all - it only
+# raises this flag when any cell changed.
+var _cells_dirty: bool = true
 
 # --- Type tables, indexed by type id ---
 var _t_name: PackedStringArray = PackedStringArray()
@@ -91,10 +85,6 @@ var _pw: int
 var _ph: int
 var _cells: int
 
-# The 8 flat-index offsets to a cell's neighbours, precomputed once _pw is
-# known so the outline repaint never allocates in the hot path.
-var _nbr_off: PackedInt32Array
-
 var _tick: int = 0
 var _tick_hz: float = TICK_HZ_MAX
 var _life_step: int = 1
@@ -110,12 +100,6 @@ func _ready() -> void:
 	_pw = _w + 2
 	_ph = _h + 2
 	_cells = _pw * _ph
-
-	_nbr_off = PackedInt32Array([
-		-_pw - 1, -_pw, -_pw + 1,
-		-1, 1,
-		_pw - 1, _pw, _pw + 1,
-	])
 
 	_active.resize(8192)
 	clearAll()
@@ -248,7 +232,6 @@ func clearAll() -> void:
 	_flow.resize(_cells)
 	_clock.resize(_cells)
 	_queued.resize(_cells)
-	_pixels.resize(_cells * 4)
 
 	_type.fill(EMPTY)
 	_variant.fill(0)
@@ -256,7 +239,6 @@ func clearAll() -> void:
 	_flow.fill(0)
 	_clock.fill(0)
 	_queued.fill(0)
-	_pixels.fill(0)
 
 	var last_row: int = (_ph - 1) * _pw
 	for x: int in _pw:
@@ -269,7 +251,7 @@ func clearAll() -> void:
 
 	_active_n = 0
 	_count = 0
-	_pixels_dirty = true
+	_cells_dirty = true
 	world_cleared.emit()
 
 
@@ -334,14 +316,42 @@ func getParticle(pos: Vector2) -> Dictionary:
 	}
 
 
-func getPixels() -> PackedByteArray:
-	return _pixels
+func getTypeCells() -> PackedByteArray:
+	return _type
 
 
-func consumePixelsDirty() -> bool:
-	var was_dirty: bool = _pixels_dirty
-	_pixels_dirty = false
+func getVariantCells() -> PackedByteArray:
+	return _variant
+
+
+func consumeCellsDirty() -> bool:
+	var was_dirty: bool = _cells_dirty
+	_cells_dirty = false
 	return was_dirty
+
+
+## Palette lookup texture for the cell shader: x = colour variant, y = type id.
+## Reserved ids (EMPTY, WALL) stay transparent. Built once at startup.
+func buildPaletteImage() -> Image:
+	var max_variants: int = 1
+	for id: int in _t_variants.size():
+		max_variants = maxi(max_variants, _t_variants[id])
+
+	var image: Image = Image.create(max_variants, _t_variants.size(), false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+
+	for id: int in _t_variants.size():
+		if id < FIRST_TYPE:
+			continue
+		for v: int in _t_variants[id]:
+			var packed: int = _t_colours[_t_colour_base[id] + v]
+			image.set_pixel(v, id, Color8(
+				packed & 0xFF,
+				(packed >> 8) & 0xFF,
+				(packed >> 16) & 0xFF,
+				(packed >> 24) & 0xFF))
+
+	return image
 
 
 func getPaddedSize() -> Vector2i:
@@ -565,8 +575,7 @@ func _place(i: int, id: int) -> void:
 	_life[i] = _t_life[id]
 	_flow[i] = randi() & 1
 	_clock[i] = _tick
-
-	_repaint_neighbourhood(i)
+	_cells_dirty = true
 
 	_count += 1
 	_activate_if_exposed(i)
@@ -575,8 +584,7 @@ func _place(i: int, id: int) -> void:
 func _erase(i: int) -> void:
 	_type[i] = EMPTY
 	_life[i] = 0
-
-	_repaint_neighbourhood(i)
+	_cells_dirty = true
 
 	_count -= 1
 
@@ -590,9 +598,7 @@ func _relocate(from: int, to: int) -> void:
 
 	_type[from] = EMPTY
 	_life[from] = 0
-
-	_repaint_neighbourhood(to)
-	_repaint_neighbourhood(from)
+	_cells_dirty = true
 
 	_activate_if_exposed(to)
 	_wake_around(from)
@@ -616,49 +622,12 @@ func _swap(a: int, b: int) -> void:
 
 	_clock[a] = _tick
 	_clock[b] = _tick
-
-	_repaint_neighbourhood(a)
-	_repaint_neighbourhood(b)
+	_cells_dirty = true
 
 	_activate_if_exposed(a)
 	_activate_if_exposed(b)
 	_wake_around(a)
 	_wake_around(b)
-
-
-## Recomputes cell `i`'s pixel plus its 8 neighbours', since a type change at
-## `i` can flip any of them between "interior" and "boundary" of their own
-## same-type blob.
-func _repaint_neighbourhood(i: int) -> void:
-	_repaint_cell(i)
-	for off: int in _nbr_off:
-		_repaint_cell(i + off)
-
-
-## A particle paints its material colour unless it both touches a same-type
-## neighbour and a differing one (empty, wall, or another material), in which
-## case it's on the edge of its group's shape and paints the outline colour
-## instead. A lone particle (no same-type neighbour) always keeps its colour.
-func _repaint_cell(i: int) -> void:
-	var t: int = _type[i]
-	if t < FIRST_TYPE:
-		_pixels.encode_u32(i * 4, 0)
-		_pixels_dirty = true
-		return
-
-	var has_same: bool = false
-	var has_diff: bool = false
-	for off: int in _nbr_off:
-		if _type[i + off] == t:
-			has_same = true
-		else:
-			has_diff = true
-		if has_same and has_diff:
-			break
-
-	var colour: int = OUTLINE_COLOUR if (has_same and has_diff) else _t_colours[_t_colour_base[t] + _variant[i]]
-	_pixels.encode_u32(i * 4, colour)
-	_pixels_dirty = true
 
 
 # --------------------------------------------------------------- active list
