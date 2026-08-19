@@ -19,7 +19,6 @@ func _ready() -> void:
 	_setup_renderer()
 	_setup_tools()
 	_setup_ui()
-	_setup_viewport()
 
 
 func _setup_renderer() -> void:
@@ -45,10 +44,3 @@ func _setup_ui() -> void:
 	_ui.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_ui)
 
-
-func _setup_viewport() -> void:
-	var viewport_size: Vector2 = Vector2(
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE,
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE
-	)
-	get_viewport().size = viewport_size
