@@ -45,11 +45,24 @@ The palette has no true neutrals, so the dark materials borrow from the blues an
 
 ## Cell size and particle outlines
 
-Cells are drawn as 8×8 pixel blocks (`WORLD_PIXEL_SCALE` in `Scripts/Singletons/Global.gd`). At that size there is room to draw an outline *inside* a cell, so every particle gets its own 1px black border while the middle keeps the material color. `WORLD_GRID_SIZE` is 250, which keeps the world the same 2000×2000 pixels it was at 1000 cells of 2px — with a sixteenth of the cells to simulate and upload.
+Particles of the same type that are touching (including diagonally) are treated as one group, and the black outline traces the outside of the whole group rather than boxing each particle in it. Because cells are drawn as 8×8 blocks, the outline fits *inside* a cell: a 1px black border on the sides that face something else, with the material color still filling the middle. A particle with no same-type neighbor ends up fully outlined on its own — every side of it faces something different — which is what a lone grain should look like.
 
-The rendering is entirely GPU-side (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader figures out from each screen pixel's position within its cell whether it lands in the outline ring or the colored interior. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+Since it only depends on each cell's immediate neighbors, this falls out correctly when a group splits apart: each piece immediately outlines its own new shape, with no extra bookkeeping.
 
-`WorldRenderer` exposes two knobs for this: `outline_pixels` (border thickness) and `group_outline`. With `group_outline` on, an edge is only drawn where the neighboring cell holds something different, so a connected clump of one material is outlined as a single silhouette instead of every particle being boxed individually — the group behavior from earlier, but now with the interior color preserved. It's off by default.
+The rendering is entirely GPU-side (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader figures out from each screen pixel's position within its cell which edges it sits against, then tests only those directions against the neighboring cells. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+
+### Tuning it
+
+Everything visual lives in `Scripts/Singletons/Global.gd`:
+
+| Constant | Meaning |
+|---|---|
+| `WORLD_PIXEL_SCALE` | Screen pixels per cell — the one number to change to try a different particle size |
+| `WORLD_PIXELS` | How big the world is on screen; `WORLD_GRID_SIZE` is derived from it |
+| `OUTLINE_PIXELS` | Outline thickness, worth raising alongside the scale |
+| `GROUP_OUTLINE` | Off boxes every particle individually instead of outlining groups |
+
+`WORLD_GRID_SIZE` is derived (`WORLD_PIXELS / WORLD_PIXEL_SCALE`), so changing the scale alone keeps the world the same size on screen and adjusts the cell count to match. Simulation cost scales with cell count, so it drops fast as the scale goes up: at 8px the world is 250×250 cells, a sixteenth of the cost of the same world at 2px.
 
 ## Performance: skipping fully-surrounded particles
 

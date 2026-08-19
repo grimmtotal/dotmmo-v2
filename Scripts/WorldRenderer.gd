@@ -9,13 +9,6 @@ extends Node2D
 
 const CELL_SHADER := preload("res://Shaders/WorldCells.gdshader")
 
-## Thickness of the outline drawn inside each cell, in screen pixels.
-@export var outline_pixels: int = 1
-
-## Outline whole connected groups of one material as a single silhouette
-## instead of boxing every particle individually.
-@export var group_outline: bool = false
-
 var _type_image: Image
 var _variant_image: Image
 var _type_texture: ImageTexture
@@ -39,8 +32,8 @@ func _ready() -> void:
 	material.set_shader_parameter("variant_tex", _variant_texture)
 	material.set_shader_parameter("palette_tex", ImageTexture.create_from_image(SimulationGlobal.buildPaletteImage()))
 	material.set_shader_parameter("cell_pixels", float(scale))
-	material.set_shader_parameter("outline_pixels", float(outline_pixels))
-	material.set_shader_parameter("group_outline", group_outline)
+	material.set_shader_parameter("outline_pixels", float(Global.OUTLINE_PIXELS))
+	material.set_shader_parameter("group_outline", Global.GROUP_OUTLINE)
 
 	_sprite = Sprite2D.new()
 	_sprite.texture = _type_texture
