@@ -1,76 +1,222 @@
-[gd_scene load_steps=3 format=3 uid="uid://c1l8qxp8d6s4x"]
+[gd_scene load_steps=5 format=3 uid="uid://c1l8qxp8d6s4x"]
 
-[ext_resource type="Script" path="res://Scripts/DevUI.gd" id="1_xxxxx"]
+[ext_resource type="Script" path="res://Scripts/DevUI.gd" id="1_devui"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bar"]
+bg_color = Color(0.08, 0.09, 0.11, 0.92)
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.08)
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
-bg_color = Color(0.12, 0.12, 0.14, 0.88)
+bg_color = Color(0.08, 0.09, 0.11, 0.92)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.08)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+content_margin_left = 12.0
+content_margin_top = 10.0
+content_margin_right = 12.0
+content_margin_bottom = 10.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hint"]
+bg_color = Color(0.08, 0.09, 0.11, 0.75)
 corner_radius_top_left = 6
 corner_radius_top_right = 6
 corner_radius_bottom_right = 6
 corner_radius_bottom_left = 6
-content_margin_left = 8.0
-content_margin_top = 8.0
-content_margin_right = 8.0
-content_margin_bottom = 8.0
+content_margin_left = 10.0
+content_margin_top = 6.0
+content_margin_right = 10.0
+content_margin_bottom = 6.0
 
 [node name="DevUI" type="CanvasLayer"]
-script = ExtResource("1_xxxxx")
+script = ExtResource("1_devui")
 
-[node name="Toolbar" type="HBoxContainer" parent="."]
-offset_left = 10.0
-offset_top = 10.0
-offset_right = 10.0
-offset_bottom = 10.0
-mouse_filter = 1
-theme_override_constants/separation = 8
+[node name="TopBar" type="PanelContainer" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 48.0
+grow_horizontal = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_bar")
+
+[node name="Row" type="HBoxContainer" parent="TopBar"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PlayButton" type="Button" parent="TopBar/Row"]
+layout_mode = 2
+custom_minimum_size = Vector2(96, 0)
+toggle_mode = true
+text = "Pause"
+tooltip_text = "Pause / resume the simulation  (P)"
 unique_name_in_owner = true
 
-[node name="ParticlePicker" type="PanelContainer" parent="."]
-offset_left = 10.0
-offset_top = 50.0
-offset_right = 230.0
-offset_bottom = 450.0
-mouse_filter = 1
+[node name="ClearButton" type="Button" parent="TopBar/Row"]
+layout_mode = 2
+text = "Clear World"
+tooltip_text = "Remove every particle"
+unique_name_in_owner = true
+
+[node name="Sep1" type="VSeparator" parent="TopBar/Row"]
+layout_mode = 2
+
+[node name="ToolLabel" type="Label" parent="TopBar/Row"]
+layout_mode = 2
+text = "Tool"
+theme_override_colors/font_color = Color(0.65, 0.68, 0.75, 1)
+
+[node name="Tools" type="HBoxContainer" parent="TopBar/Row"]
+layout_mode = 2
+theme_override_constants/separation = 2
+unique_name_in_owner = true
+
+[node name="Paint" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+button_pressed = true
+text = "Paint"
+tooltip_text = "Paint particles  (1)"
+
+[node name="Erase" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Erase"
+tooltip_text = "Erase particles  (2)"
+
+[node name="Select" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Inspect"
+tooltip_text = "Inspect a particle  (3)"
+
+[node name="Sep2" type="VSeparator" parent="TopBar/Row"]
+layout_mode = 2
+
+[node name="BrushLabel" type="Label" parent="TopBar/Row"]
+layout_mode = 2
+text = "Brush"
+theme_override_colors/font_color = Color(0.65, 0.68, 0.75, 1)
+
+[node name="BrushSlider" type="HSlider" parent="TopBar/Row"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+size_flags_vertical = 4
+min_value = 1.0
+max_value = 20.0
+step = 1.0
+value = 1.0
+tooltip_text = "Brush size  ( [ and ] )"
+unique_name_in_owner = true
+
+[node name="BrushValue" type="Label" parent="TopBar/Row"]
+layout_mode = 2
+custom_minimum_size = Vector2(28, 0)
+text = "1"
+horizontal_alignment = 2
+unique_name_in_owner = true
+
+[node name="Spacer" type="Control" parent="TopBar/Row"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="Sidebar" type="PanelContainer" parent="."]
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 60.0
+offset_right = 276.0
+offset_bottom = -12.0
+grow_vertical = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
-unique_name_in_owner = true
 
-[node name="VBoxContainer" type="VBoxContainer" parent="ParticlePicker"]
+[node name="Column" type="VBoxContainer" parent="Sidebar"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 8
 
-[node name="Title" type="Label" parent="ParticlePicker/VBoxContainer"]
+[node name="PaletteTitle" type="Label" parent="Sidebar/Column"]
 layout_mode = 2
-text = "Particles"
-horizontal_alignment = 1
+text = "Materials"
+theme_override_font_sizes/font_size = 18
 
-[node name="ScrollContainer" type="ScrollContainer" parent="ParticlePicker/VBoxContainer"]
+[node name="PaletteScroll" type="ScrollContainer" parent="Sidebar/Column"]
 layout_mode = 2
 size_flags_vertical = 3
-custom_minimum_size = Vector2(200, 340)
+horizontal_scroll_mode = 0
 
-[node name="ParticleList" type="VBoxContainer" parent="ParticlePicker/VBoxContainer/ScrollContainer"]
+[node name="ParticleList" type="VBoxContainer" parent="Sidebar/Column/PaletteScroll"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 unique_name_in_owner = true
 
-[node name="InfoPanel" type="PanelContainer" parent="."]
-offset_left = 10.0
-offset_top = 460.0
-offset_right = 230.0
-offset_bottom = 640.0
-mouse_filter = 1
-theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+[node name="Divider" type="HSeparator" parent="Sidebar/Column"]
+layout_mode = 2
+
+[node name="DetailsTitle" type="Label" parent="Sidebar/Column"]
+layout_mode = 2
+text = "Details"
+theme_override_font_sizes/font_size = 18
+
+[node name="DetailsBox" type="HBoxContainer" parent="Sidebar/Column"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DetailSwatch" type="ColorRect" parent="Sidebar/Column/DetailsBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(28, 28)
+size_flags_vertical = 4
+color = Color(0.46, 0.29, 0.15, 1)
 unique_name_in_owner = true
 
-[node name="MarginContainer" type="MarginContainer" parent="InfoPanel"]
+[node name="DetailName" type="Label" parent="Sidebar/Column/DetailsBox"]
 layout_mode = 2
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 8
-
-[node name="InfoLabel" type="Label" parent="InfoPanel/MarginContainer"]
-layout_mode = 2
-autowrap_mode = 3
+size_flags_horizontal = 3
+size_flags_vertical = 4
+text = "Sand"
+theme_override_font_sizes/font_size = 16
 unique_name_in_owner = true
+
+[node name="InfoLabel" type="RichTextLabel" parent="Sidebar/Column"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 190)
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+theme_override_font_sizes/normal_font_size = 13
+unique_name_in_owner = true
+
+[node name="HintPanel" type="PanelContainer" parent="."]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -320.0
+offset_top = -96.0
+offset_right = -12.0
+offset_bottom = -12.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_hint")
+
+[node name="HintLabel" type="Label" parent="HintPanel"]
+layout_mode = 2
+text = "Drag  paint / erase          Scroll  zoom
+Middle-drag  pan            P  pause
+1 2 3  tools                [ ]  brush size"
+theme_override_colors/font_color = Color(0.62, 0.66, 0.74, 1)
+theme_override_font_sizes/font_size = 12

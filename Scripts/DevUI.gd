@@ -3,12 +3,14 @@ extends CanvasLayer
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 const DevToolsController = preload("res://Scripts/DevToolsController.gd")
 
+const SWATCH_SIZE: int = 26
+const LABEL_COLOR: String = "#a6adbb"
+
 @export var tools_controller: DevToolsController
 
 var _particle_buttons: Dictionary = {}
-var _info_label: Label
-var _play_button: Button
-var _brush_label: Label
+var _tool_buttons: Dictionary = {}
+var _button_group: ButtonGroup = ButtonGroup.new()
 
 
 func _ready() -> void:
@@ -16,154 +18,209 @@ func _ready() -> void:
 		push_warning("DevUI: tools_controller is not assigned.")
 		return
 
-	_info_label = %InfoLabel
-	_build_toolbar()
-	_build_particle_picker()
+	_connect_toolbar()
+	_build_palette()
 
 	tools_controller.tool_changed.connect(_on_tool_changed)
-	tools_controller.selected_particle_changed.connect(_on_selected_particle_changed)
+	tools_controller.selected_particle_changed.connect(_show_particle_details)
 	tools_controller.particle_selected.connect(_on_particle_inspected)
 	tools_controller.dev_mode_changed.connect(_on_dev_mode_changed)
 	tools_controller.brush_radius_changed.connect(_on_brush_radius_changed)
 
-	_update_info_panel(tools_controller.selected_particle)
-	_update_brush_label(tools_controller.brush_radius)
+	%BrushSlider.value = tools_controller.brush_radius
+	_on_brush_radius_changed(tools_controller.brush_radius)
+	_show_particle_details(tools_controller.selected_particle)
 
 
-func _build_toolbar() -> void:
-	var toolbar: HBoxContainer = %Toolbar
+# Toolbar
 
-	_play_button = Button.new()
-	_play_button.text = "Pause"
-	_play_button.toggle_mode = true
-	_play_button.button_pressed = false
-	_play_button.toggled.connect(_on_play_toggled)
-	toolbar.add_child(_play_button)
+func _connect_toolbar() -> void:
+	%PlayButton.toggled.connect(_on_play_toggled)
+	%ClearButton.pressed.connect(tools_controller.clear_all_particles)
+	%BrushSlider.value_changed.connect(_on_brush_slider_changed)
 
-	var clear_button: Button = Button.new()
-	clear_button.text = "Clear"
-	clear_button.pressed.connect(tools_controller.clear_all_particles)
-	toolbar.add_child(clear_button)
+	_tool_buttons = {
+		DevToolsController.Tool.PAINT: %Tools.get_node("Paint"),
+		DevToolsController.Tool.ERASE: %Tools.get_node("Erase"),
+		DevToolsController.Tool.SELECT: %Tools.get_node("Select"),
+	}
 
-	toolbar.add_child(_tool_button("Paint", DevToolsController.Tool.PAINT, true))
-	toolbar.add_child(_tool_button("Erase", DevToolsController.Tool.ERASE))
-	toolbar.add_child(_tool_button("Select", DevToolsController.Tool.SELECT))
-
-	_brush_label = Label.new()
-	_brush_label.name = "BrushLabel"
-	_brush_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	toolbar.add_child(_brush_label)
+	var tool_group: ButtonGroup = ButtonGroup.new()
+	for tool: int in _tool_buttons:
+		var button: Button = _tool_buttons[tool]
+		button.button_group = tool_group
+		button.pressed.connect(tools_controller.set_tool.bind(tool))
 
 
-func _tool_button(text: String, tool: DevToolsController.Tool, active: bool = false) -> Button:
-	var button: Button = Button.new()
-	button.text = text
-	button.toggle_mode = true
-	button.button_pressed = active
-	button.toggled.connect(func(is_pressed: bool) -> void:
-		if is_pressed:
-			tools_controller.set_tool(tool)
-	)
-	button.name = text
-	return button
+# Palette
 
-
-func _build_particle_picker() -> void:
-	var list: VBoxContainer = %ParticleList
-
-	for type_name: String in Particles.TYPES.keys():
-		var config: Dictionary = Particles.get_config(type_name)
-		var button: Button = Button.new()
-		button.text = type_name
-		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		button.tooltip_text = _format_particle_tooltip(type_name, config)
-		button.pressed.connect(func() -> void:
-			tools_controller.set_selected_particle(type_name)
-		)
-		list.add_child(button)
+func _build_palette() -> void:
+	for type_name: String in Particles.TYPES:
+		var button: Button = _make_palette_entry(type_name)
+		%ParticleList.add_child(button)
 		_particle_buttons[type_name] = button
 
 	_highlight_selected(tools_controller.selected_particle)
 
 
-func _format_particle_tooltip(type_name: String, config: Dictionary) -> String:
+func _make_palette_entry(type_name: String) -> Button:
+	var config: Dictionary = Particles.get_config(type_name)
+
+	var button: Button = Button.new()
+	button.name = type_name
+	button.text = "  " + type_name
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	button.toggle_mode = true
+	button.button_group = _button_group
+	button.custom_minimum_size = Vector2(0, 34)
+	button.icon = _make_swatch_texture(config.get("colors", []))
+	button.tooltip_text = _describe_particle(type_name, config, false)
+	button.pressed.connect(tools_controller.set_selected_particle.bind(type_name))
+	return button
+
+
+func _make_swatch_texture(colors: Array) -> ImageTexture:
+	var stripes: int = maxi(colors.size(), 1)
+	var image: Image = Image.create(stripes, 1, false, Image.FORMAT_RGBA8)
+	for i: int in stripes:
+		image.set_pixel(i, 0, _color_at(colors, i))
+	image.resize(SWATCH_SIZE, SWATCH_SIZE, Image.INTERPOLATE_NEAREST)
+	return ImageTexture.create_from_image(image)
+
+
+func _color_at(colors: Array, index: int) -> Color:
+	if colors.is_empty():
+		return Color.MAGENTA
+	return Color(colors[index % colors.size()])
+
+
+# Details panel
+
+func _show_particle_details(type_name: String, extra: String = "") -> void:
+	_highlight_selected(type_name)
+
+	if type_name.is_empty() or not Particles.TYPES.has(type_name):
+		%DetailName.text = "Nothing selected"
+		%DetailSwatch.color = Color(0, 0, 0, 0.35)
+		%InfoLabel.text = extra
+		return
+
+	var config: Dictionary = Particles.get_config(type_name)
+	%DetailName.text = type_name
+	%DetailSwatch.color = _color_at(config.get("colors", []), 0)
+
+	var text: String = _describe_particle(type_name, config, true)
+	if not extra.is_empty():
+		text += "\n" + extra
+	%InfoLabel.text = text
+
+
+func _describe_particle(type_name: String, config: Dictionary, rich: bool) -> String:
 	var lines: PackedStringArray = PackedStringArray()
-	lines.append("%s" % type_name)
-	lines.append("Gravity: %s" % str(config.get("initialGravity", Vector2.ZERO)))
-	lines.append("Solid: %s" % str(config.get("solid", false)))
-	lines.append("Liquid: %s" % str(config.get("liquid", false)))
-	lines.append("Density: %s" % str(config.get("density", 1.0)))
+	if not rich:
+		lines.append(type_name)
 
-	var timers: Dictionary = config.get("timers", {}) as Dictionary
-	if not timers.is_empty():
-		lines.append("Timers:")
-		for timer_name: String in timers:
-			var t: Dictionary = timers[timer_name] as Dictionary
-			lines.append("  %s: despawn=%s spawn=%s" % [timer_name, str(t.get("despawn")), str(t.get("spawn"))])
+	lines.append(_field("State", _state_name(config), rich))
+	lines.append(_field("Density", "%.2f" % float(config.get("density", 1.0)), rich))
+	lines.append(_field("Falls", _gravity_name(config.get("initialGravity", Vector2.ZERO)), rich))
 
-	var interactions: Dictionary = config.get("interactions", {}) as Dictionary
-	if not interactions.is_empty():
-		lines.append("Interactions:")
-		for target: String in interactions:
-			var inter: Dictionary = interactions[target] as Dictionary
-			lines.append("  -> %s: destroy=%s spawn=%s reset=%s" % [
-				target, str(inter.get("destroy", false)), str(inter.get("spawn", [])), str(inter.get("resetTimers", []))
-			])
+	var reactions: PackedStringArray = _reaction_lines(config)
+	if not reactions.is_empty():
+		lines.append(_field("Reacts with", "", rich))
+		for line: String in reactions:
+			lines.append("   " + line)
+
+	var lifespan: String = _lifespan_text(config)
+	if not lifespan.is_empty():
+		lines.append(_field("Lifespan", lifespan, rich))
 
 	return "\n".join(lines)
 
 
+func _field(label: String, value: String, rich: bool) -> String:
+	var heading: String = "[color=%s]%s:[/color]" % [LABEL_COLOR, label] if rich else label + ":"
+	if value.is_empty():
+		return heading
+	return "%s %s" % [heading, value]
+
+
+func _state_name(config: Dictionary) -> String:
+	if config.get("solid", false):
+		return "Solid"
+	if config.get("liquid", false):
+		return "Liquid"
+	return "Gas"
+
+
+func _gravity_name(gravity: Vector2) -> String:
+	if is_zero_approx(gravity.y):
+		return "Stays in place"
+	return "Downward" if gravity.y > 0.0 else "Upward"
+
+
+func _reaction_lines(config: Dictionary) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var interactions: Dictionary = config.get("interactions", {}) as Dictionary
+
+	for target: String in interactions:
+		var inter: Dictionary = interactions[target] as Dictionary
+		var effects: PackedStringArray = PackedStringArray()
+		if inter.get("destroy", false):
+			effects.append("is consumed")
+		var spawned: Array = inter.get("spawn", [])
+		if not spawned.is_empty():
+			effects.append("creates " + ", ".join(spawned))
+		if effects.is_empty():
+			continue
+		lines.append("%s -> %s" % [target, " and ".join(effects)])
+
+	return lines
+
+
+func _lifespan_text(config: Dictionary) -> String:
+	var timers: Dictionary = config.get("timers", {}) as Dictionary
+	for timer_name: String in timers:
+		var despawn: Variant = (timers[timer_name] as Dictionary).get("despawn")
+		if despawn is int:
+			return "%.1fs" % (float(despawn) / 1000.0)
+	return ""
+
+
+# Signal handlers
+
 func _on_tool_changed(tool: DevToolsController.Tool) -> void:
-	var tool_name: String = DevToolsController.Tool.keys()[tool]
-	for child in %Toolbar.get_children():
-		if child is Button and child.name in ["Paint", "Erase", "Select"]:
-			child.button_pressed = child.name == tool_name
+	if _tool_buttons.has(tool):
+		_tool_buttons[tool].button_pressed = true
 
 
-func _on_selected_particle_changed(type_name: String) -> void:
-	_highlight_selected(type_name)
-	_update_info_panel(type_name)
-
-
-func _on_particle_inspected(data: Dictionary, _grid_pos: Vector2) -> void:
+func _on_particle_inspected(data: Dictionary, grid_pos: Vector2) -> void:
 	if data.is_empty():
-		_update_info_panel(tools_controller.selected_particle, "No particle selected.")
-	else:
-		_update_info_panel(data.get("type", ""), "Grid: %s\nVelocity: %s\nTimers: %s" % [
-			str(_grid_pos), str(data.get("velocity", Vector2.ZERO)), str(data.get("timers", {}))
-		])
+		_show_particle_details("", "Nothing at %d, %d." % [grid_pos.x, grid_pos.y])
+		return
+
+	_show_particle_details(data.get("type", ""), _field(
+		"Position", "%d, %d" % [grid_pos.x, grid_pos.y], true
+	))
 
 
 func _on_dev_mode_changed(enabled: bool) -> void:
 	visible = enabled
 
 
-func _on_play_toggled(pressed: bool) -> void:
-	get_tree().paused = pressed
-	_play_button.text = "Play" if pressed else "Pause"
+func _on_play_toggled(paused: bool) -> void:
+	get_tree().paused = paused
+	%PlayButton.text = "Play" if paused else "Pause"
+
+
+func _on_brush_slider_changed(value: float) -> void:
+	tools_controller.brush_radius = int(value)
 
 
 func _on_brush_radius_changed(radius: int) -> void:
-	_update_brush_label(radius)
-
-
-func _update_brush_label(radius: int) -> void:
-	if _brush_label != null:
-		_brush_label.text = "Brush: %d" % radius
+	%BrushSlider.set_value_no_signal(radius)
+	%BrushValue.text = str(radius)
 
 
 func _highlight_selected(type_name: String) -> void:
-	for name: String in _particle_buttons:
-		var button: Button = _particle_buttons[name]
-		button.disabled = (name == type_name)
-
-
-func _update_info_panel(type_name: String, extra: String = "") -> void:
-	if type_name.is_empty() or not Particles.TYPES.has(type_name):
-		_info_label.text = extra
-		return
-	var config: Dictionary = Particles.get_config(type_name)
-	var text: String = _format_particle_tooltip(type_name, config)
-	if not extra.is_empty():
-		text += "\n\n" + extra
-	_info_label.text = text
+	if _particle_buttons.has(type_name):
+		_particle_buttons[type_name].button_pressed = true

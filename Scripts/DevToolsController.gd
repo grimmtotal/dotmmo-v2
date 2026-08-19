@@ -1,6 +1,7 @@
 extends Node2D
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
+const BrushCursor = preload("res://Scripts/BrushCursor.gd")
 
 enum Tool {
 	PAINT,
@@ -29,10 +30,13 @@ const ZOOM_FACTOR: float = 1.1
 @export var brush_radius: int = 1:
 	set(value):
 		brush_radius = clampi(value, 1, 20)
+		if _cursor != null:
+			_cursor.radius = brush_radius
 		brush_radius_changed.emit(brush_radius)
 
 var _current_tool: Tool = Tool.PAINT
 
+var _cursor: BrushCursor
 var _camera: Camera2D
 var _is_panning: bool = false
 var _pan_start_mouse: Vector2 = Vector2.ZERO
@@ -41,8 +45,17 @@ var _pan_start_position: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	_setup_camera()
+	_setup_cursor()
 	set_process_input(dev_mode_enabled)
 	set_process(dev_mode_enabled)
+
+
+func _setup_cursor() -> void:
+	_cursor = BrushCursor.new()
+	_cursor.name = "BrushCursor"
+	_cursor.radius = brush_radius
+	_cursor.z_index = 100
+	add_child(_cursor)
 
 
 func _setup_camera() -> void:
@@ -68,10 +81,12 @@ func _input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_zoom_camera(ZOOM_FACTOR)
+			if not _is_pointer_over_ui():
+				_zoom_camera(ZOOM_FACTOR)
 			return
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			_zoom_camera(1.0 / ZOOM_FACTOR)
+			if not _is_pointer_over_ui():
+				_zoom_camera(1.0 / ZOOM_FACTOR)
 			return
 		elif event.button_index == MOUSE_BUTTON_MIDDLE:
 			_is_panning = event.pressed
@@ -79,7 +94,7 @@ func _input(event: InputEvent) -> void:
 				_pan_start_mouse = event.position
 				_pan_start_position = _camera.position
 			return
-		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _is_pointer_over_ui():
 			_perform_tool_action(_mouse_to_grid())
 
 
@@ -92,8 +107,17 @@ func _process(_delta: float) -> void:
 		_camera.position = _pan_start_position + mouse_delta / _camera.zoom
 		_clamp_camera()
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		_perform_tool_action(_mouse_to_grid())
+	var over_ui: bool = _is_pointer_over_ui()
+	_cursor.visible = not over_ui
+	if not over_ui:
+		_cursor.grid_position = _mouse_to_grid()
+
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not over_ui:
+		_perform_tool_action(_cursor.grid_position)
+
+
+func _is_pointer_over_ui() -> bool:
+	return get_viewport().gui_get_hovered_control() != null
 
 
 func _zoom_camera(factor: float) -> void:
@@ -109,8 +133,8 @@ func _clamp_camera() -> void:
 	var visible_size: Vector2 = get_viewport_rect().size / _camera.zoom
 	var min_pos: Vector2 = visible_size * 0.5
 	var max_pos: Vector2 = world_size - visible_size * 0.5
-	_camera.position.x = clampf(_camera.position.x, mini(min_pos.x, max_pos.x), maxi(min_pos.x, max_pos.x))
-	_camera.position.y = clampf(_camera.position.y, mini(min_pos.y, max_pos.y), maxi(min_pos.y, max_pos.y))
+	_camera.position.x = clampf(_camera.position.x, minf(min_pos.x, max_pos.x), maxf(min_pos.x, max_pos.x))
+	_camera.position.y = clampf(_camera.position.y, minf(min_pos.y, max_pos.y), maxf(min_pos.y, max_pos.y))
 
 
 func set_tool(tool: Tool) -> void:
@@ -151,15 +175,26 @@ func _perform_tool_action(grid_pos: Vector2) -> void:
 
 
 func _spawn_brush(center: Vector2) -> void:
-	for x: int in range(-brush_radius + 1, brush_radius):
-		for y: int in range(-brush_radius + 1, brush_radius):
-			SimulationGlobal.spawnParticle(selected_particle, center + Vector2(x, y))
+	for cell: Vector2 in _brush_cells(center):
+		SimulationGlobal.spawnParticle(selected_particle, cell)
 
 
 func _erase_brush(center: Vector2) -> void:
+	for cell: Vector2 in _brush_cells(center):
+		SimulationGlobal.despawnParticle(cell)
+
+
+func _brush_cells(center: Vector2) -> Array:
+	if brush_radius <= 1:
+		return [center]
+
+	var cells: Array = []
+	var limit: float = float(brush_radius) - 0.5
 	for x: int in range(-brush_radius + 1, brush_radius):
 		for y: int in range(-brush_radius + 1, brush_radius):
-			SimulationGlobal.despawnParticle(center + Vector2(x, y))
+			if Vector2(x, y).length() <= limit:
+				cells.append(center + Vector2(x, y))
+	return cells
 
 
 func _select_particle(grid_pos: Vector2) -> void:
