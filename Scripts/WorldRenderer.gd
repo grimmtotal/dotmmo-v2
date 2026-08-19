@@ -1,14 +1,19 @@
 extends Node2D
 
-const Particles = preload("res://Scripts/Singletons/Particles.gd")
+## Blits the simulation grid into a single texture. Colours are resolved once at
+## spawn time and cached on the particle, so drawing is a plain lookup per cell.
 
 var _image: Image
 var _texture: ImageTexture
 var _sprite: Sprite2D
+var _bounds: Rect2i
 
 
 func _ready() -> void:
-	_image = Image.create(Global.WORLD_GRID_SIZE, Global.WORLD_GRID_SIZE, false, Image.FORMAT_RGBA8)
+	var size: int = Global.WORLD_GRID_SIZE
+	_bounds = Rect2i(0, 0, size, size)
+
+	_image = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	_image.fill(Color.TRANSPARENT)
 	_texture = ImageTexture.create_from_image(_image)
 
@@ -28,39 +33,30 @@ func _render_frame() -> void:
 	_image.fill(Color.TRANSPARENT)
 
 	var grid: Dictionary = SimulationGlobal.grid
-	var particle_data: Dictionary = SimulationGlobal.particles
+	var particles: Dictionary = SimulationGlobal.particles
 
 	for pos: Vector2 in grid:
-		var ids = grid[pos]
-		if ids.is_empty():
+		var cell: Vector2i = Vector2i(pos)
+		if not _bounds.has_point(cell):
 			continue
 
-		var color: Color = _resolve_color(ids, particle_data)
-		if pos.x >= 0 and pos.x < Global.WORLD_GRID_SIZE and pos.y >= 0 and pos.y < Global.WORLD_GRID_SIZE:
-			_image.set_pixel(int(pos.x), int(pos.y), color)
+		var ids: Array = grid[pos]
+		if ids.size() == 1:
+			var only: Dictionary = particles.get(ids[0], {}) as Dictionary
+			if not only.is_empty():
+				_image.set_pixelv(cell, only["color"])
+			continue
+
+		_image.set_pixelv(cell, _blend(ids, particles))
 
 	_texture.update(_image)
 
 
-func _resolve_color(ids: Array, particle_data: Dictionary) -> Color:
-	if ids.size() == 1:
-		return _particle_color(particle_data[ids[0]] as Dictionary)
-
-	# Blend colors when multiple non-solids share a cell.
+## Overlapping non-solids (gas in water, etc.) are composited back to front.
+func _blend(ids: Array, particles: Dictionary) -> Color:
 	var blended: Color = Color.TRANSPARENT
 	for id: int in ids:
-		var p: Dictionary = particle_data.get(id, {}) as Dictionary
-		if p.is_empty():
-			continue
-		blended = blended.blend(_particle_color(p))
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if not p.is_empty():
+			blended = blended.blend(p["color"])
 	return blended
-
-
-func _particle_color(p: Dictionary) -> Color:
-	var config: Dictionary = Particles.get_config(p["type"])
-	var colors: Array = config.get("colors", [])
-	if colors.is_empty():
-		return Color.MAGENTA
-
-	var index: int = p.get("color_index", 0)
-	return Color(colors[index])

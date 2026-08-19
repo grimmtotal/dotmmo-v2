@@ -5,12 +5,14 @@ const DevToolsController = preload("res://Scripts/DevToolsController.gd")
 
 const SWATCH_SIZE: int = 26
 const LABEL_COLOR: String = "#a6adbb"
+const STATS_INTERVAL: float = 0.25
 
 @export var tools_controller: DevToolsController
 
 var _particle_buttons: Dictionary = {}
 var _tool_buttons: Dictionary = {}
 var _button_group: ButtonGroup = ButtonGroup.new()
+var _stats_countdown: float = 0.0
 
 
 func _ready() -> void:
@@ -30,6 +32,19 @@ func _ready() -> void:
 	%BrushSlider.value = tools_controller.brush_radius
 	_on_brush_radius_changed(tools_controller.brush_radius)
 	_show_particle_details(tools_controller.selected_particle)
+
+
+func _process(delta: float) -> void:
+	_stats_countdown -= delta
+	if _stats_countdown > 0.0:
+		return
+	_stats_countdown = STATS_INTERVAL
+
+	%Stats.text = "%d particles  ·  %d awake  ·  %d fps" % [
+		SimulationGlobal.particles.size(),
+		SimulationGlobal.getActiveCount(),
+		Engine.get_frames_per_second(),
+	]
 
 
 # Toolbar
