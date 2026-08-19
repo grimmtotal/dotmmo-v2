@@ -10,8 +10,8 @@ extends Node
 ## lava sinking through water) is done by swapping the two cells.
 ##
 ## There are no per-particle objects. A particle *is* its cell: a type id, a
-## colour variant, a life counter and a flow direction, one byte each in
-## parallel arrays.
+## colour variant, a life counter, a repeating-timer counter and a flow
+## direction, one byte each in parallel arrays.
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 
@@ -34,8 +34,8 @@ const ADAPT_FROM: int = 6000
 const ADAPT_TO: int = 30000
 const MAX_TICKS_PER_FRAME: int = 2
 
-# Life is counted in 60Hz-equivalent ticks so lifespans stay constant in real
-# time even when the tick rate drops. One byte caps a lifespan at ~4.2s.
+# Timers are counted in 60Hz-equivalent ticks so durations stay constant in real
+# time even when the tick rate drops. One byte caps a duration at ~4.2s.
 const MAX_LIFE: int = 255
 
 signal world_cleared
@@ -44,6 +44,7 @@ signal world_cleared
 var _type: PackedByteArray
 var _variant: PackedByteArray
 var _life: PackedByteArray
+var _timer: PackedByteArray
 var _flow: PackedByteArray
 var _clock: PackedByteArray
 
@@ -65,16 +66,25 @@ var _t_solid: PackedByteArray
 var _t_liquid: PackedByteArray
 var _t_reactive: PackedByteArray
 var _t_density: PackedFloat32Array
-var _t_life: PackedByteArray
 var _t_variants: PackedByteArray
 var _t_colour_base: PackedInt32Array
 var _t_colours: PackedInt64Array
 var _t_spread_x: PackedInt32Array
 var _t_spread_y: PackedInt32Array
 
-# What a material spawns when its life timer expires. Most materials spawn
-# nothing; the few that do (Fire -> Smoke) are stored here.
+# Timer durations, as the inclusive tick range a particle rolls within when it
+# is created. A range of zero means the material has no timer of that kind.
+#
+# The life timer runs once and ends the particle; the repeat timer runs over and
+# over and leaves it alone, spawning its products beside it each time it comes
+# round. Their products (Fire -> Smoke on death, Lava -> Fire on repeat) are
+# kept out of the packed arrays because most materials spawn nothing at all.
+var _t_life_min: PackedByteArray
+var _t_life_max: PackedByteArray
 var _t_death_spawn: Dictionary = {}
+var _t_every_min: PackedByteArray
+var _t_every_max: PackedByteArray
+var _t_every_spawn: Dictionary = {}
 
 # Reactions. `_react_mask[(a << 8) | b]` is 1 when material `a` responds to
 # touching material `b`; the details then come out of `_react`.
@@ -119,7 +129,10 @@ func _build_types() -> void:
 	_t_liquid.resize(total)
 	_t_reactive.resize(total)
 	_t_density.resize(total)
-	_t_life.resize(total)
+	_t_life_min.resize(total)
+	_t_life_max.resize(total)
+	_t_every_min.resize(total)
+	_t_every_max.resize(total)
 	_t_variants.resize(total)
 	_t_colour_base.resize(total)
 	_t_spread_x.resize(total)
@@ -156,8 +169,15 @@ func _configure_type(id: int, config: Dictionary) -> void:
 	var spread: Vector2i = config.get("spread", Vector2i.ZERO)
 	_t_spread_x[id] = spread.x
 	_t_spread_y[id] = spread.y
-	_t_life[id] = _lifespan_ticks(config)
-	_t_death_spawn[id] = _death_spawn(config)
+	var life: Vector2i = _timer_ticks(config, "despawn")
+	_t_life_min[id] = life.x
+	_t_life_max[id] = life.y
+	_t_death_spawn[id] = _timer_spawn(config, "despawn")
+
+	var every: Vector2i = _timer_ticks(config, "every")
+	_t_every_min[id] = every.x
+	_t_every_max[id] = every.y
+	_t_every_spawn[id] = _timer_spawn(config, "every")
 
 	if liquid:
 		_t_move[id] = MOVE_LIQUID
@@ -179,25 +199,48 @@ func _configure_type(id: int, config: Dictionary) -> void:
 	_configure_reactions(id, config)
 
 
-## Collapses the timer table down to a single lifespan. Every material in
-## Particles.gd uses at most one despawn timer, so a per-cell byte can replace
-## the old per-particle timer dictionary.
-func _lifespan_ticks(config: Dictionary) -> int:
+## Collapses the timer table down to a single duration range for one kind of
+## timer ("despawn" or "every"). Every material in Particles.gd uses at most one
+## timer of each kind, so a pair of per-cell bytes can replace the old
+## per-particle timer dictionary.
+##
+## Durations are authored in milliseconds, either as a single value or as a
+## Vector2i(min, max) range that each particle rolls within, so identical
+## material spawned in one stroke does not fire in lockstep. A zero range means
+## the material has no timer of that kind.
+func _timer_ticks(config: Dictionary, key: String) -> Vector2i:
 	for timer_name: String in config.get("timers", {}) as Dictionary:
-		var despawn: Variant = ((config["timers"] as Dictionary)[timer_name] as Dictionary).get("despawn")
-		if despawn is int:
-			return clampi(roundi(float(despawn) * 0.001 * TICK_HZ_MAX), 1, MAX_LIFE)
-	return 0
+		var value: Variant = ((config["timers"] as Dictionary)[timer_name] as Dictionary).get(key)
+		if value is int:
+			var fixed: int = _ms_to_ticks(value)
+			return Vector2i(fixed, fixed)
+		if value is Vector2i:
+			return Vector2i(_ms_to_ticks(mini(value.x, value.y)), _ms_to_ticks(maxi(value.x, value.y)))
+	return Vector2i.ZERO
 
 
-## Products spawned when a material's life timer expires (e.g. Fire -> Smoke).
-func _death_spawn(config: Dictionary) -> PackedByteArray:
+func _ms_to_ticks(ms: int) -> int:
+	return clampi(roundi(float(ms) * 0.001 * TICK_HZ_MAX), 1, MAX_LIFE)
+
+
+## Products spawned when one of a material's timers fires: Fire -> Smoke as its
+## life runs out, Lava -> Fire each time its bubble timer comes round.
+func _timer_spawn(config: Dictionary, key: String) -> PackedByteArray:
 	var spawn: PackedByteArray = PackedByteArray()
 	for timer_name: String in config.get("timers", {}) as Dictionary:
-		for spawn_name: String in ((config["timers"] as Dictionary)[timer_name] as Dictionary).get("spawn", []):
+		var timer: Dictionary = (config["timers"] as Dictionary)[timer_name] as Dictionary
+		if timer.get(key) == null:
+			continue
+		for spawn_name: String in timer.get("spawn", []):
 			if _t_ids.has(spawn_name):
 				spawn.append(_t_ids[spawn_name])
 	return spawn
+
+
+## Rolls a per-particle duration out of a material's tick range. A material with
+## a fixed duration has min == max, so it costs one comparison and no dice.
+func _roll(lo: int, hi: int) -> int:
+	return lo if hi <= lo else randi_range(lo, hi)
 
 
 func _configure_reactions(id: int, config: Dictionary) -> void:
@@ -207,7 +250,7 @@ func _configure_reactions(id: int, config: Dictionary) -> void:
 
 		var inter: Dictionary = (config["interactions"] as Dictionary)[target]
 		var destroy: bool = inter["destroy"]
-		var reset: bool = not inter["resetTimers"].is_empty() and _t_life[id] > 0
+		var reset: bool = not inter["resetTimers"].is_empty() and _t_life_min[id] > 0
 
 		var spawn: PackedByteArray = PackedByteArray()
 		for spawn_name: String in inter["spawn"]:
@@ -236,6 +279,7 @@ func clearAll() -> void:
 	_type.resize(_cells)
 	_variant.resize(_cells)
 	_life.resize(_cells)
+	_timer.resize(_cells)
 	_flow.resize(_cells)
 	_clock.resize(_cells)
 	_queued.resize(_cells)
@@ -243,6 +287,7 @@ func clearAll() -> void:
 	_type.fill(EMPTY)
 	_variant.fill(0)
 	_life.fill(0)
+	_timer.fill(0)
 	_flow.fill(0)
 	_clock.fill(0)
 	_queued.fill(0)
@@ -304,8 +349,12 @@ func getParticle(pos: Vector2) -> Dictionary:
 		return {}
 
 	var life_ms: int = 0
-	if _t_life[t] > 0:
+	if _t_life_min[t] > 0:
 		life_ms = roundi(float(_life[i]) / TICK_HZ_MAX * 1000.0)
+
+	var timer_ms: int = 0
+	if _t_every_min[t] > 0:
+		timer_ms = roundi(float(_timer[i]) / TICK_HZ_MAX * 1000.0)
 
 	return {
 		"type": _t_name[t],
@@ -314,6 +363,7 @@ func getParticle(pos: Vector2) -> Dictionary:
 		"solid": _t_solid[t] != 0,
 		"liquid": _t_liquid[t] != 0,
 		"life_ms": life_ms,
+		"timer_ms": timer_ms,
 	}
 
 
@@ -463,10 +513,18 @@ func _step() -> void:
 		if t < FIRST_TYPE:
 			continue
 		if _clock[i] == tick:
-			continue  # something already moved into this cell this tick
+			# Something already moved into this cell this tick, so leave it be
+			# until the next one. `_clock` is a byte and `tick` wraps every 256
+			# ticks, so this also fires spuriously on a cell that has sat still
+			# that long - and a skipped cell is never re-queued by the code
+			# below. Re-activating here costs nothing in the real case (the move
+			# that set the clock already queued this cell) and keeps a settled
+			# particle from freezing for good in the spurious one.
+			_activate_if_exposed(i)
+			continue
 
 		# --- lifespan ---
-		if _t_life[t] != 0:
+		if _t_life_min[t] != 0:
 			var remaining: int = _life[i] - life_step
 			if remaining <= 0:
 				var death_spawn: PackedByteArray = _t_death_spawn.get(t, PackedByteArray())
@@ -481,6 +539,22 @@ func _step() -> void:
 				continue
 			_life[i] = remaining
 			_activate(i)  # a counting-down cell always needs another look
+
+		# --- repeating timer ---
+		# Unlike the lifespan this fires over and over and leaves the particle
+		# where it is: every time it comes round the material tries to place its
+		# products in a neighbouring cell, and the attempt simply fails when
+		# there is nowhere for them to go. That is what shapes the effect - a
+		# lava pool bubbles fire off its exposed surface, while the body of it
+		# is walled in by its own kind (and dormant besides) and stays quiet.
+		if _t_every_min[t] != 0:
+			var due: int = _timer[i] - life_step
+			if due <= 0:
+				due = _roll(_t_every_min[t], _t_every_max[t])
+				for spawn_id: int in _t_every_spawn[t] as PackedByteArray:
+					_spawn_beside(i, spawn_id)
+			_timer[i] = due
+			_activate(i)  # a repeating timer never stops needing another look
 
 		# --- reactions against the four orthogonal neighbours ---
 		if _t_reactive[t] != 0:
@@ -560,7 +634,8 @@ func _apply_reaction(i: int, key: int) -> bool:
 	var spawn: PackedByteArray = reaction["spawn"]
 
 	if reaction["reset"]:
-		_life[i] = _t_life[_type[i]]
+		var reset_id: int = _type[i]
+		_life[i] = _roll(_t_life_min[reset_id], _t_life_max[reset_id])
 		_activate(i)
 
 	if reaction["destroy"]:
@@ -600,7 +675,8 @@ func _place(i: int, id: int) -> void:
 	var variant: int = randi() % int(_t_variants[id])
 	_type[i] = id
 	_variant[i] = variant
-	_life[i] = _t_life[id]
+	_life[i] = _roll(_t_life_min[id], _t_life_max[id])
+	_timer[i] = _roll(_t_every_min[id], _t_every_max[id])
 	_flow[i] = randi() & 1
 	_clock[i] = _tick
 	_cells_dirty = true
@@ -640,6 +716,7 @@ func _spawn(i: int, id: int) -> bool:
 func _erase(i: int) -> void:
 	_type[i] = EMPTY
 	_life[i] = 0
+	_timer[i] = 0
 	_cells_dirty = true
 
 	_count -= 1
@@ -649,11 +726,13 @@ func _relocate(from: int, to: int) -> void:
 	_type[to] = _type[from]
 	_variant[to] = _variant[from]
 	_life[to] = _life[from]
+	_timer[to] = _timer[from]
 	_flow[to] = _flow[from]
 	_clock[to] = _tick
 
 	_type[from] = EMPTY
 	_life[from] = 0
+	_timer[from] = 0
 	_cells_dirty = true
 
 	_activate_if_exposed(to)
@@ -665,16 +744,19 @@ func _swap(a: int, b: int) -> void:
 	var t: int = _type[a]
 	var v: int = _variant[a]
 	var l: int = _life[a]
+	var m: int = _timer[a]
 	var f: int = _flow[a]
 
 	_type[a] = _type[b]
 	_variant[a] = _variant[b]
 	_life[a] = _life[b]
+	_timer[a] = _timer[b]
 	_flow[a] = _flow[b]
 
 	_type[b] = t
 	_variant[b] = v
 	_life[b] = l
+	_timer[b] = m
 	_flow[b] = f
 
 	_clock[a] = _tick
@@ -727,7 +809,7 @@ func _activate_if_exposed(i: int) -> void:
 	var t: int = _type[i]
 	if t < FIRST_TYPE:
 		return
-	if _t_life[t] > 0:
+	if _t_life_min[t] > 0:
 		_activate(i)
 		return
 	var pw: int = _pw

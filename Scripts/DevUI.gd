@@ -146,9 +146,13 @@ func _describe_particle(type_name: String, config: Dictionary, rich: bool) -> St
 		for line: String in reactions:
 			lines.append("   " + line)
 
-	var lifespan: String = _lifespan_text(config)
+	var lifespan: String = _duration_text(config, "despawn")
 	if not lifespan.is_empty():
 		lines.append(_field("Lifespan", lifespan, rich))
+
+	var repeat: String = _repeat_text(config)
+	if not repeat.is_empty():
+		lines.append(_field("Repeats", repeat, rich))
 
 	return "\n".join(lines)
 
@@ -193,13 +197,38 @@ func _reaction_lines(config: Dictionary) -> PackedStringArray:
 	return lines
 
 
-func _lifespan_text(config: Dictionary) -> String:
+## Timer durations are authored in milliseconds, either as a single value or as
+## a Vector2i(min, max) range that each particle rolls within.
+func _duration_text(config: Dictionary, key: String) -> String:
 	var timers: Dictionary = config.get("timers", {}) as Dictionary
 	for timer_name: String in timers:
-		var despawn: Variant = (timers[timer_name] as Dictionary).get("despawn")
-		if despawn is int:
-			return "%.1fs" % (float(despawn) / 1000.0)
+		var value: Variant = (timers[timer_name] as Dictionary).get(key)
+		if value is int:
+			return "%.1fs" % (float(value) / 1000.0)
+		if value is Vector2i:
+			return "%.1f-%.1fs" % [
+				float(mini(value.x, value.y)) / 1000.0,
+				float(maxi(value.x, value.y)) / 1000.0,
+			]
 	return ""
+
+
+## What a repeating timer does each time it comes round, e.g. Lava reads
+## "creates Fire every 1.5-4.0s".
+func _repeat_text(config: Dictionary) -> String:
+	var every: String = _duration_text(config, "every")
+	if every.is_empty():
+		return ""
+
+	var timers: Dictionary = config.get("timers", {}) as Dictionary
+	for timer_name: String in timers:
+		var timer: Dictionary = timers[timer_name] as Dictionary
+		var spawned: Array = timer.get("spawn", [])
+		if timer.get("every") == null or spawned.is_empty():
+			continue
+		return "creates %s every %s" % [", ".join(spawned), every]
+
+	return "every " + every
 
 
 # Signal handlers

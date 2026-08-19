@@ -18,7 +18,15 @@ const DEFAULTS = {
 		"resetTimers": []
 	},
 	"timer": {
+		# Durations are milliseconds, given either as a single int or as a
+		# Vector2i(min, max) range that every particle rolls within when it is
+		# created, so a batch of the same material never fires in lockstep.
+		#
+		# `despawn` fires once and takes the particle with it (Fire -> Smoke).
+		# `every` fires over and over and leaves the particle alone, trying to
+		# place its products in a neighbouring cell each time (Lava -> Fire).
 		"despawn": null,
+		"every": null,
 		"spawn": [],
 		"changeVelocity": null # Vector2
 	}
@@ -50,13 +58,7 @@ static func get_config(type_name: String) -> Dictionary:
 
 	for timer_name: String in merged.get("timers", {}):
 		var timer: Dictionary = (merged["timers"] as Dictionary)[timer_name] as Dictionary
-		timer = timer.duplicate(true)
-		if not timer.has("despawn"):
-			timer["despawn"] = default_timer["despawn"]
-		if not timer.has("spawn"):
-			timer["spawn"] = default_timer["spawn"].duplicate()
-		if not timer.has("changeVelocity"):
-			timer["changeVelocity"] = default_timer["changeVelocity"]
+		timer = _merge_with_defaults(timer.duplicate(true), default_timer)
 		merged["timers"][timer_name] = timer
 
 	_cached_configs[type_name] = merged
@@ -157,7 +159,7 @@ const TYPES = {
 		},
 		"timers": {
 			"Life": {
-				"despawn": 800,
+				"despawn": Vector2i(600, 1000),
 				"spawn": ["Smoke"],
 				"changeVelocity": Vector2.ZERO
 			},
@@ -173,7 +175,7 @@ const TYPES = {
 		},
 		"timers": {
 			"Life": {
-				"despawn": 1500,
+				"despawn": Vector2i(1200, 1800),
 				"spawn": [],
 				"changeVelocity": Vector2.ZERO
 			}
@@ -189,7 +191,7 @@ const TYPES = {
 		},
 		"timers": {
 			"Life": {
-				"despawn": 1200,
+				"despawn": Vector2i(1000, 1400),
 				"spawn": [],
 				"changeVelocity": Vector2.ZERO
 			}
@@ -222,7 +224,7 @@ const TYPES = {
 		},
 		"timers": {
 			"Life": {
-				"despawn": 3000,
+				"despawn": Vector2i(2500, 3500),
 				"spawn": [],
 				"changeVelocity": Vector2.ZERO
 			}
@@ -237,6 +239,11 @@ const TYPES = {
 		"idleBehaviors": {
 			"changeVelocity": Vector2.ZERO
 		},
-		"timers": {}
+		"timers": {
+			"Bubble": {
+				"every": Vector2i(1500, 4000),
+				"spawn": ["Fire"]
+			}
+		}
 	}
 }
