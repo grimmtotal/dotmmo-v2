@@ -2,7 +2,7 @@ extends Node2D
 
 const WorldRenderer = preload("res://Scripts/WorldRenderer.gd")
 const DevToolsController = preload("res://Scripts/DevToolsController.gd")
-const DevUI = preload("res://Scripts/DevUI.gd")
+const DevUI = preload("res://Scenes/DevUI.tscn")
 
 @export var dev_mode_enabled: bool = true:
 	set(value):
@@ -12,7 +12,7 @@ const DevUI = preload("res://Scripts/DevUI.gd")
 
 var _renderer: WorldRenderer
 var _tools_controller: DevToolsController
-var _ui: DevUI
+var _ui: CanvasLayer
 
 
 func _ready() -> void:
@@ -38,7 +38,7 @@ func _setup_tools() -> void:
 
 
 func _setup_ui() -> void:
-	_ui = DevUI.new()
+	_ui = DevUI.instantiate()
 	_ui.name = "DevUI"
 	_ui.tools_controller = _tools_controller
 	_ui.visible = dev_mode_enabled

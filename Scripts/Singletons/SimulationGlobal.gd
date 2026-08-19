@@ -298,7 +298,7 @@ func _flush_spawn_queue() -> void:
 func _flush_despawn_queue() -> void:
 	for id: int in _despawn_queue:
 		var p: Dictionary = particles.get(id, {}) as Dictionary
-		if p != null:
+		if not p.is_empty():
 			_destroy_particle(p)
 	_despawn_queue.clear()
 
