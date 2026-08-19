@@ -576,6 +576,7 @@ func _place(i: int, id: int) -> void:
 
 	_count += 1
 	_activate_if_exposed(i)
+	_wake_reactors(i)
 
 
 ## Spawns a particle at cell `i`, jittered by the material's spread range.
@@ -625,6 +626,7 @@ func _relocate(from: int, to: int) -> void:
 	_cells_dirty = true
 
 	_activate_if_exposed(to)
+	_wake_reactors(to)
 	_wake_around(from)
 
 
@@ -650,6 +652,8 @@ func _swap(a: int, b: int) -> void:
 
 	_activate_if_exposed(a)
 	_activate_if_exposed(b)
+	_wake_reactors(a)
+	_wake_reactors(b)
 	_wake_around(a)
 	_wake_around(b)
 
@@ -702,9 +706,12 @@ func _activate_if_exposed(i: int) -> void:
 		_activate(i)
 
 
-## Wakes the cells that could newly be able to move or react now that `i`
-## changed: the three above it and the two beside it. A cell being vacated
-## cannot unblock anything below it, so those are deliberately skipped.
+## Wakes the cells that could newly be able to move now that `i` changed: the
+## three above it and the two beside it. A cell being vacated cannot unblock
+## anything below it, so those are deliberately skipped.
+##
+## This is movement only. A cell that gains a *neighbour* rather than a gap
+## needs `_wake_reactors` instead.
 func _wake_around(i: int) -> void:
 	var pw: int = _pw
 	_activate_if_exposed(i - pw)
@@ -712,3 +719,40 @@ func _wake_around(i: int) -> void:
 	_activate_if_exposed(i - pw + 1)
 	_activate_if_exposed(i - 1)
 	_activate_if_exposed(i + 1)
+
+
+## Wakes the neighbours that react to whatever now occupies `i`.
+##
+## Movement only ever wakes cells that might newly be able to *move*, which
+## deliberately excludes everything below a change. Reactions have the opposite
+## requirement: the particle that just had something land on it is exactly the
+## one that has to be looked at again, and it is usually dormant - settled
+## material drops out of the active list precisely because it cannot move.
+## Without this, a reaction between a resting particle and something placed
+## against it simply never runs: sand survives being buried in lava, and a
+## plant never catches from the fire sitting on top of it (which also leaves
+## that fire resetting its lifespan against fuel that never burns away, so it
+## burns forever).
+##
+## Only the four orthogonal neighbours are woken, matching the neighbourhood
+## the step loop actually tests reactions against, and only those that really
+## do react to `i`'s material - one mask lookup each, so an inert pile costs
+## nothing.
+func _wake_reactors(i: int) -> void:
+	var t: int = _type[i]
+	if t < FIRST_TYPE:
+		return
+
+	var pw: int = _pw
+	var n: int = i - pw
+	if _react_mask[(_type[n] << 8) | t] != 0:
+		_activate(n)
+	n = i - 1
+	if _react_mask[(_type[n] << 8) | t] != 0:
+		_activate(n)
+	n = i + 1
+	if _react_mask[(_type[n] << 8) | t] != 0:
+		_activate(n)
+	n = i + pw
+	if _react_mask[(_type[n] << 8) | t] != 0:
+		_activate(n)
