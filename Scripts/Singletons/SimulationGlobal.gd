@@ -657,15 +657,25 @@ func _activate(i: int) -> void:
 ## A cell whose material has a life timer is always activated regardless,
 ## since it needs to be in the active list to count down and despawn even
 ## while fully surrounded (e.g. Smoke buried in the middle of a thick cloud).
+##
+## The cheap disqualifiers run first (already queued, nothing there) so the
+## 8-neighbour scan only happens for real particles that aren't queued yet.
+## EMPTY and WALL never activate at all: the step loop would skip them anyway,
+## so listing them was always wasted work.
 func _activate_if_exposed(i: int) -> void:
+	if _queued[i] != 0:
+		return
 	var t: int = _type[i]
+	if t < FIRST_TYPE:
+		return
 	if _t_life[t] > 0:
 		_activate(i)
 		return
-	for off: int in _nbr_off:
-		if _type[i + off] != t:
-			_activate(i)
-			return
+	var pw: int = _pw
+	if _type[i - pw - 1] != t or _type[i - pw] != t or _type[i - pw + 1] != t \
+			or _type[i - 1] != t or _type[i + 1] != t \
+			or _type[i + pw - 1] != t or _type[i + pw] != t or _type[i + pw + 1] != t:
+		_activate(i)
 
 
 ## Wakes the cells that could newly be able to move or react now that `i`

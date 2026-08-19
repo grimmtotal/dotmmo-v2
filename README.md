@@ -48,3 +48,11 @@ Particles of the same type that are touching (including diagonally) are treated 
 Because this only depends on each cell's immediate neighbors, it falls out correctly if a group splits apart: each resulting piece gets its own outline around its own shape, with no extra bookkeeping needed.
 
 Both the palette coloring and the outline are computed entirely on the GPU (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader does the palette lookup plus the 8-neighbor boundary test per cell. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+
+## Performance: skipping fully-surrounded particles
+
+A cell that is completely surrounded by same-type neighbors can never move or react on its own — every neighbor it could swap into or displace is identical to it, which always blocks the attempt, and materials never react with their own type. So instead of re-checking those interior cells every tick, the simulation leaves them out of its active list entirely once they become fully surrounded, and only reconsiders them when a neighboring cell actually changes (the same wake-up path already used to notify neighbors of a move).
+
+In practice this means a large falling or settled clump of one material costs work proportional to its outer shell each tick, not its full volume — interior grains ride along for free, and any grain that gets exposed (the group breaks apart, erodes, or lands) automatically rejoins individual simulation the moment that happens. Materials with a despawn timer (Fire, Smoke, Steam, Ash) are exempted and always stay active, since they need to keep counting down even while buried.
+
+This is implemented via `_activate_if_exposed` in `Scripts/Singletons/SimulationGlobal.gd`.
