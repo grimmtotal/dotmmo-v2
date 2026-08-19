@@ -15,7 +15,15 @@ const DEFAULTS = {
 	"interaction": {
 		"spawn": [],
 		"destroy": false,
-		"resetTimers": []
+		"resetTimers": [],
+		# Probability the reaction fires on any tick the two are touching, 0..1.
+		# 1.0 means it always does, which is the right answer for a reaction
+		# that reads as instant (sand dropped in lava). Anything that reads as
+		# a process rather than an event wants a low value here: it is contact
+		# time, not contact alone, that decides the outcome, and the rate is
+		# what makes a burn spread at a watchable speed instead of flashing
+		# through a whole bed in a tick.
+		"chance": 1.0
 	},
 	"timer": {
 		# Durations are milliseconds, given either as a single int or as a
@@ -116,6 +124,11 @@ const TYPES = {
 				"spawn": ["Steam"],
 				"destroy": true,
 				"resetTimers": []
+			},
+			"Ember": {
+				"spawn": ["Steam"],
+				"destroy": true,
+				"resetTimers": []
 			}
 		},
 		"idleBehaviors": {
@@ -147,7 +160,12 @@ const TYPES = {
 		"density": 0.3,
 		"interactions": {
 			"Plant": {
-				"spawn": ["Fire"],
+				"spawn": [],
+				"destroy": false,
+				"resetTimers": ["Life"]
+			},
+			"Ember": {
+				"spawn": [],
 				"destroy": false,
 				"resetTimers": ["Life"]
 			},
@@ -204,9 +222,20 @@ const TYPES = {
 		"density": 0.8,
 		"interactions": {
 			"Fire": {
-				"spawn": ["Fire"],
+				"spawn": ["Ember"],
 				"destroy": true,
-				"resetTimers": []
+				"resetTimers": [],
+				"chance": 0.25
+			},
+			"Ember": {
+				"spawn": ["Ember"],
+				"destroy": true,
+				"resetTimers": [],
+				# The rate a burn creeps through a bed. An ember lives 1.2-2.2s,
+				# so at this rate it very nearly always passes the burn on
+				# before it dies - but not quite always, which is what lets a
+				# fire fizzle out instead of every fire being total.
+				"chance": 0.04
 			}
 		},
 		"idleBehaviors": {
@@ -227,6 +256,37 @@ const TYPES = {
 				"despawn": Vector2i(2500, 3500),
 				"spawn": [],
 				"changeVelocity": Vector2.ZERO
+			}
+		}
+	},
+	"Ember": {
+		"initialGravity": Vector2(0, 0),
+		"colors": ["#ff6b1a", "#c1440e"], # Hot Cinder, Dull Cinder
+		"solid": true,
+		"density": 0.8,
+		"interactions": {
+			"Water": {
+				"spawn": [],
+				"destroy": true,
+				"resetTimers": []
+			}
+		},
+		"idleBehaviors": {
+			"changeVelocity": Vector2.ZERO
+		},
+		"timers": {
+			# Two timers at once: it burns down to Ash on the life timer while
+			# throwing flame off whatever face is open on the repeating one. An
+			# ember buried in a bed has no open face, so it smoulders to Ash
+			# without ever showing a flame - which is what you want, and costs
+			# nothing to arrange.
+			"Life": {
+				"despawn": Vector2i(1200, 2200),
+				"spawn": ["Ash"]
+			},
+			"Burn": {
+				"every": Vector2i(150, 400),
+				"spawn": ["Fire"]
 			}
 		}
 	},
