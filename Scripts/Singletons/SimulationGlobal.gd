@@ -598,18 +598,25 @@ func _step() -> void:
 		# --- repeating timer ---
 		# Unlike the lifespan this fires over and over and leaves the particle
 		# where it is: every time it comes round the material tries to place its
-		# products in a neighbouring cell, and the attempt simply fails when
-		# there is nowhere for them to go. That is what shapes the effect - a
-		# lava pool bubbles fire off its exposed surface, while the body of it
-		# is walled in by its own kind (and dormant besides) and stays quiet.
-		if _t_every_min[t] != 0:
+		# products in a neighbouring cell. A lava pool bubbles fire off its
+		# exposed surface while the body of it stays quiet.
+		#
+		# Only a cell with somewhere to put its products stays awake for this.
+		# A repeating timer is the one thing in the simulation that keeps a cell
+		# in the active list of its own accord, for as long as the cell exists -
+		# so a pool walled into stone was paying for its whole perimeter, every
+		# tick, forever, to run a timer whose products had nowhere to go. Cells
+		# that fail this test are woken again the moment a neighbour clears,
+		# through the same `_wake_around` every other dormant cell relies on.
+		if _t_every_min[t] != 0 and (_type[i - pw] == EMPTY or _type[i - 1] == EMPTY \
+				or _type[i + 1] == EMPTY or _type[i + pw] == EMPTY):
 			var due: int = _timer[i] - life_step
 			if due <= 0:
 				due = _roll(_t_every_min[t], _t_every_max[t])
 				for spawn_id: int in _t_every_spawn[t] as PackedByteArray:
 					_spawn_beside(i, spawn_id)
 			_timer[i] = due
-			_activate(i)  # a repeating timer never stops needing another look
+			_activate(i)  # still somewhere to bubble into; look again next tick
 
 		# --- reactions against the four orthogonal neighbours ---
 		if _t_reactive[t] != 0:
@@ -929,6 +936,15 @@ func _wake_around(i: int) -> void:
 	_activate_if_exposed(i - pw + 1)
 	_activate_if_exposed(i - 1)
 	_activate_if_exposed(i + 1)
+
+	# The cell below is the one exception. It can never be unblocked for
+	# movement by a gap opening above it, which is why it is skipped otherwise -
+	# but it can be unblocked for a repeating timer, which needs open space to
+	# put its products in. Without this a lava cell goes quiet for good the
+	# first time its own smoke drifts across it.
+	var below: int = i + pw
+	if _t_every_min[_type[below]] != 0:
+		_activate(below)
 
 
 ## Wakes the neighbours that react to whatever now occupies `i`.
