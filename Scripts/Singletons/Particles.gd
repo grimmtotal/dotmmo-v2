@@ -21,6 +21,56 @@ const DEFAULTS = {
 	}
 }
 
+static var _cached_configs: Dictionary = {}
+
+static func get_config(type_name: String) -> Dictionary:
+	if _cached_configs.has(type_name):
+		return _cached_configs[type_name]
+
+	if not TYPES.has(type_name):
+		push_warning("Unknown particle type: ", type_name)
+		return DEFAULTS.duplicate(true)
+
+	var merged: Dictionary = DEFAULTS.duplicate(true)
+	var default_interaction: Dictionary = merged["interaction"].duplicate(true)
+	var default_timer: Dictionary = merged["timer"].duplicate(true)
+	merged.erase("interaction")
+	merged.erase("timer")
+
+	_merge_dict(merged, TYPES[type_name])
+
+	for target: String in merged.get("interactions", {}):
+		var inter: Dictionary = merged["interactions"][target].duplicate(true)
+		inter = _merge_with_defaults(inter, default_interaction)
+		merged["interactions"][target] = inter
+
+	for timer_name: String in merged.get("timers", {}):
+		var timer: Dictionary = merged["timers"][timer_name].duplicate(true)
+		if not timer.has("despawn"):
+			timer["despawn"] = default_timer["despawn"]
+		if not timer.has("spawn"):
+			timer["spawn"] = default_timer["spawn"].duplicate()
+		if not timer.has("changeVelocity"):
+			timer["changeVelocity"] = default_timer["changeVelocity"]
+		merged["timers"][timer_name] = timer
+
+	_cached_configs[type_name] = merged
+	return merged
+
+
+static func _merge_dict(base: Dictionary, override: Dictionary) -> void:
+	for key: String in override:
+		if base.has(key) and base[key] is Dictionary and override[key] is Dictionary:
+			_merge_dict(base[key], override[key])
+		else:
+			base[key] = override[key]
+
+
+static func _merge_with_defaults(specific: Dictionary, defaults: Dictionary) -> Dictionary:
+	var merged: Dictionary = defaults.duplicate(true)
+	_merge_dict(merged, specific)
+	return merged
+
 const TYPES = {
 	"Sand": {
 		"initialGravity": Vector2(0, 1),
