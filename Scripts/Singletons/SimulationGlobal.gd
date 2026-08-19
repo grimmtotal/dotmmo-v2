@@ -21,7 +21,7 @@ var particles: Dictionary = {}
 
 # Only particles that actually need updates are tracked here. Settled solids and
 # idle non-solids are skipped until an active particle collides with them.
-var _active_particles: Array[int] = []
+var _active_particles: Array = []
 var _active_set: Dictionary = {}
 var _active_dirty: bool = false
 
@@ -29,8 +29,8 @@ var _active_dirty: bool = false
 var _batch_cursor: int = 0
 
 # Deferred mutation queues so we never modify grid while iterating it.
-var _spawn_queue: Array[Dictionary] = []
-var _despawn_queue: Array[int] = []
+var _spawn_queue: Array = []
+var _despawn_queue: Array = []
 
 var _next_id: int = 0
 var _tick_count: int = 0
@@ -59,6 +59,9 @@ func spawnParticle(type_name: String, pos: Vector2) -> bool:
 	if config.get("solid", false):
 		if _has_any_particle_at(pos):
 			return false
+	elif config.get("liquid", false):
+		if _has_solid_at(pos) or _has_liquid_at(pos):
+			return false
 	else:
 		if _has_solid_at(pos):
 			return false
@@ -68,7 +71,7 @@ func spawnParticle(type_name: String, pos: Vector2) -> bool:
 
 
 func despawnParticle(pos: Vector2) -> int:
-	var ids: Array[int] = grid.get(pos, [])
+	var ids = grid.get(pos, [])
 	var count: int = ids.size()
 	for id: int in ids:
 		_despawn_queue.append(id)
@@ -76,46 +79,49 @@ func despawnParticle(pos: Vector2) -> int:
 
 
 func getParticle(pos: Vector2) -> Dictionary:
-	var ids: Array[int] = grid.get(pos, [])
+	var ids = grid.get(pos, [])
 	if ids.is_empty():
 		return {}
-	return particles.get(ids[0], {})
+	return particles.get(ids[0], {}) as Dictionary
 
 
-func getParticlesAt(pos: Vector2) -> Array[Dictionary]:
-	var ids: Array[int] = grid.get(pos, [])
-	var result: Array[Dictionary] = []
+func getParticlesAt(pos: Vector2) -> Array:
+	var ids = grid.get(pos, [])
+	var result = []
 	result.resize(ids.size())
 	for i: int in ids.size():
-		result[i] = particles.get(ids[i], {})
+		result[i] = particles.get(ids[i], {}) as Dictionary
 	return result
 
 
 func getParticleById(id: int) -> Dictionary:
-	return particles.get(id, {})
+	return particles.get(id, {}) as Dictionary
 
 
 func moveParticle(from: Vector2, to: Vector2) -> bool:
-	var ids: Array[int] = grid.get(from, [])
+	var ids = grid.get(from, [])
 	if ids.is_empty():
 		return false
 	return moveParticleById(ids[0], to)
 
 
 func setParticleVelocity(pos: Vector2, velocity: Vector2) -> bool:
-	var ids: Array[int] = grid.get(pos, [])
+	var ids = grid.get(pos, [])
 	if ids.is_empty():
 		return false
 	return setParticleVelocityById(ids[0], velocity)
 
 
 func moveParticleById(id: int, to: Vector2) -> bool:
-	var p: Dictionary = particles.get(id)
-	if p == null:
+	var p: Dictionary = particles.get(id, {}) as Dictionary
+	if p.is_empty():
 		return false
 	var config: Dictionary = Particles.get_config(p["type"])
 	if config.get("solid", false):
 		if _has_any_particle_at(to):
+			return false
+	elif config.get("liquid", false):
+		if _has_solid_at(to) or _has_liquid_at(to):
 			return false
 	else:
 		if _has_solid_at(to):
@@ -132,8 +138,8 @@ func moveParticleById(id: int, to: Vector2) -> bool:
 
 
 func setParticleVelocityById(id: int, velocity: Vector2) -> bool:
-	var p: Dictionary = particles.get(id)
-	if p == null:
+	var p: Dictionary = particles.get(id, {}) as Dictionary
+	if p.is_empty():
 		return false
 	p["velocity"] = velocity
 	_activate_particle(id)
@@ -184,8 +190,8 @@ func _add_to_grid(p: Dictionary) -> void:
 
 
 func _remove_from_grid(p: Dictionary) -> void:
-	var ids: Array[int] = grid.get(p["pos"])
-	if ids == null:
+	var ids = grid.get(p["pos"], [])
+	if ids.is_empty():
 		return
 	ids.erase(p["id"])
 	if ids.is_empty():
@@ -193,15 +199,15 @@ func _remove_from_grid(p: Dictionary) -> void:
 
 
 func _has_any_particle_at(pos: Vector2) -> bool:
-	var ids: Array[int] = grid.get(pos, [])
+	var ids = grid.get(pos, [])
 	return not ids.is_empty()
 
 
 func _has_solid_at(pos: Vector2) -> bool:
-	var ids: Array[int] = grid.get(pos, [])
+	var ids = grid.get(pos, [])
 	for id: int in ids:
-		var p: Dictionary = particles.get(id)
-		if p == null:
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if p.is_empty():
 			continue
 		var config: Dictionary = Particles.get_config(p["type"])
 		if config.get("solid", false):
@@ -209,14 +215,26 @@ func _has_solid_at(pos: Vector2) -> bool:
 	return false
 
 
-func _get_particles_at(pos: Vector2) -> Array[Dictionary]:
-	var ids: Array[int] = grid.get(pos, [])
-	var result: Array[Dictionary] = []
+func _has_liquid_at(pos: Vector2) -> bool:
+	var ids = grid.get(pos, [])
+	for id: int in ids:
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if p.is_empty():
+			continue
+		var config: Dictionary = Particles.get_config(p["type"])
+		if config.get("liquid", false):
+			return true
+	return false
+
+
+func _get_particles_at(pos: Vector2) -> Array:
+	var ids = grid.get(pos, [])
+	var result = []
 	result.resize(ids.size())
 	var write: int = 0
 	for id: int in ids:
-		var p: Dictionary = particles.get(id)
-		if p != null:
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if not p.is_empty():
 			result[write] = p
 			write += 1
 	result.resize(write)
@@ -254,8 +272,8 @@ func _flush_spawn_queue() -> void:
 		}
 
 		for timer_name: String in config.get("timers", {}):
-			var t: Dictionary = config["timers"][timer_name]
-			if t["despawn"] != null and t["despawn"] != false:
+			var t: Dictionary = (config["timers"] as Dictionary)[timer_name] as Dictionary
+			if t["despawn"] is int:
 				p["timers"][timer_name] = float(t["despawn"])
 
 		particles[p["id"]] = p
@@ -267,7 +285,7 @@ func _flush_spawn_queue() -> void:
 
 func _flush_despawn_queue() -> void:
 	for id: int in _despawn_queue:
-		var p: Dictionary = particles.get(id)
+		var p: Dictionary = particles.get(id, {}) as Dictionary
 		if p != null:
 			_destroy_particle(p)
 	_despawn_queue.clear()
@@ -277,11 +295,11 @@ func _rebuild_active_particles() -> void:
 	if not _active_dirty:
 		return
 
-	var rebuilt: Array[int] = []
+	var rebuilt: Array = []
 	var rebuilt_set: Dictionary = {}
 	for id: int in _active_particles:
-		var p: Dictionary = particles.get(id)
-		if p == null:
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if p.is_empty():
 			continue
 		if not _is_active(p):
 			continue
@@ -317,8 +335,8 @@ func _process_batch(delta_ms: float) -> void:
 func _update_range(from_index: int, to_index: int, delta_ms: float) -> void:
 	for i: int in range(from_index, to_index):
 		var id: int = _active_particles[i]
-		var p: Dictionary = particles.get(id)
-		if p == null:
+		var p: Dictionary = particles.get(id, {}) as Dictionary
+		if p.is_empty():
 			continue
 		_update_particle(p, delta_ms)
 
@@ -332,7 +350,7 @@ func _update_particle(p: Dictionary, delta_ms: float) -> void:
 		p["velocity"] += gravity
 
 	# Apply idle velocity changes.
-	var idle: Dictionary = config.get("idleBehaviors", {})
+	var idle: Dictionary = config.get("idleBehaviors", {}) as Dictionary
 	var idle_vel: Variant = idle.get("changeVelocity")
 	if idle_vel is Vector2 and idle_vel != Vector2.ZERO:
 		p["velocity"] += idle_vel
@@ -358,8 +376,9 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 	if vel == Vector2.ZERO:
 		return false
 
-	var attempts: Array[Vector2]
+	var attempts: Array
 	var is_solid: bool = config.get("solid", false)
+	var is_liquid: bool = config.get("liquid", false)
 	if is_solid:
 		# Solids fall straight down and slide down diagonal slopes.
 		attempts = [Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1)]
@@ -373,10 +392,11 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 		])
 
 	var pos: Vector2 = p["pos"]
+	var moving_density: float = config.get("density", 1.0)
 
 	for dir: Vector2 in attempts:
 		var target: Vector2 = pos + dir
-		var targets: Array[Dictionary] = _get_particles_at(target)
+		var targets: Array = _get_particles_at(target)
 
 		if targets.is_empty():
 			_move_particle(p, target)
@@ -384,21 +404,36 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 
 		var has_solid: bool = _cell_has_solid(target, targets)
 
-		if is_solid:
-			# Solids pile up and slide; they are blocked by any particle.
-			var result: Dictionary = _handle_collisions(p, targets)
-			if result["destroyed"]:
-				return true
-			continue
-
 		if has_solid:
-			# Non-solids are blocked by solids but can still trigger interactions.
+			# Any particle is blocked by solids. Solids also pile up against each other.
 			var result: Dictionary = _handle_collisions(p, targets)
 			if result["destroyed"]:
 				return true
 			continue
 
-		# Non-solid entering a cell with other non-solids: overlap and interact.
+		# No solids in target. Try density-based sinking when moving downward.
+		var swap_target: Dictionary = {}
+		if dir.y > 0:
+			swap_target = _find_swap_target(targets, moving_density)
+		if not swap_target.is_empty():
+			_swap_particles(p, swap_target, pos, target)
+			return true
+
+		# Can't sink. Solids can't share cells with non-solids.
+		if is_solid:
+			var result: Dictionary = _handle_collisions(p, targets)
+			if result["destroyed"]:
+				return true
+			continue
+
+		# Can't sink. Liquids cannot share a cell with another liquid.
+		if is_liquid and _cell_has_liquid(target, targets):
+			var result: Dictionary = _handle_collisions(p, targets)
+			if result["destroyed"]:
+				return true
+			continue
+
+		# Otherwise move in and share the cell, triggering interactions.
 		_move_particle(p, target)
 		_handle_collisions(p, targets)
 		return true
@@ -406,9 +441,9 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 	return false
 
 
-func _unique_dirs(dirs: Array[Vector2]) -> Array[Vector2]:
+func _unique_dirs(dirs: Array) -> Array:
 	var seen: Dictionary = {}
-	var unique: Array[Vector2] = []
+	var unique: Array = []
 	for dir: Vector2 in dirs:
 		if dir != Vector2.ZERO and not seen.has(dir):
 			seen[dir] = true
@@ -416,7 +451,7 @@ func _unique_dirs(dirs: Array[Vector2]) -> Array[Vector2]:
 	return unique
 
 
-func _cell_has_solid(_pos: Vector2, particle_list: Array[Dictionary]) -> bool:
+func _cell_has_solid(_pos: Vector2, particle_list: Array) -> bool:
 	for other: Dictionary in particle_list:
 		var other_config: Dictionary = Particles.get_config(other["type"])
 		if other_config.get("solid", false):
@@ -431,7 +466,44 @@ func _move_particle(p: Dictionary, new_pos: Vector2) -> void:
 	_activate_particle(p["id"])
 
 
-func _handle_collisions(mover: Dictionary, targets: Array[Dictionary]) -> Dictionary:
+func _find_swap_target(targets: Array, moving_density: float) -> Dictionary:
+	var best: Dictionary = {}
+	var best_density: float = INF
+	for target: Dictionary in targets:
+		var target_config: Dictionary = Particles.get_config(target["type"])
+		if target_config.get("solid", false):
+			continue
+		var target_density: float = target_config.get("density", 1.0)
+		if target_density < best_density:
+			best_density = target_density
+			best = target
+	if best.is_empty():
+		return {}
+	if moving_density > best_density:
+		return best
+	return {}
+
+
+func _swap_particles(a: Dictionary, b: Dictionary, a_pos: Vector2, b_pos: Vector2) -> void:
+	_remove_from_grid(a)
+	_remove_from_grid(b)
+	a["pos"] = b_pos
+	b["pos"] = a_pos
+	_add_to_grid(a)
+	_add_to_grid(b)
+	_activate_particle(a["id"])
+	_activate_particle(b["id"])
+
+
+func _cell_has_liquid(_pos: Vector2, particle_list: Array) -> bool:
+	for other: Dictionary in particle_list:
+		var other_config: Dictionary = Particles.get_config(other["type"])
+		if other_config.get("liquid", false):
+			return true
+	return false
+
+
+func _handle_collisions(mover: Dictionary, targets: Array) -> Dictionary:
 	var handled: bool = false
 	var mover_destroyed: bool = false
 	var mover_config: Dictionary = Particles.get_config(mover["type"])
@@ -458,11 +530,11 @@ func _handle_collisions(mover: Dictionary, targets: Array[Dictionary]) -> Dictio
 
 
 func _apply_interaction(subject: Dictionary, object_type: String, subject_config: Dictionary) -> Dictionary:
-	var interactions: Dictionary = subject_config.get("interactions", {})
+	var interactions: Dictionary = subject_config.get("interactions", {}) as Dictionary
 	if not interactions.has(object_type):
 		return {"handled": false, "destroyed": false, "activated": false}
 
-	var inter: Dictionary = interactions[object_type]
+	var inter: Dictionary = interactions[object_type] as Dictionary
 	var destroyed: bool = inter.get("destroy", false)
 	var activated: bool = false
 
@@ -479,8 +551,8 @@ func _apply_interaction(subject: Dictionary, object_type: String, subject_config
 	# Reset specified timers on self.
 	var reset_timers: Array = inter.get("resetTimers", [])
 	for timer_name: String in reset_timers:
-		var t: Dictionary = subject_config.get("timers", {}).get(timer_name, {})
-		if t.get("despawn") != null and t["despawn"] != false:
+		var t: Dictionary = (subject_config.get("timers", {}) as Dictionary).get(timer_name, {}) as Dictionary
+		if t.get("despawn") is int:
 			subject["timers"][timer_name] = float(t["despawn"])
 			activated = true
 
@@ -488,8 +560,8 @@ func _apply_interaction(subject: Dictionary, object_type: String, subject_config
 
 
 func _tick_timers(p: Dictionary, config: Dictionary, delta_ms: float) -> void:
-	var timers: Dictionary = config.get("timers", {})
-	var expired: Array[String] = []
+	var timers: Dictionary = config.get("timers", {}) as Dictionary
+	var expired: Array = []
 
 	for timer_name: String in p["timers"]:
 		if not timers.has(timer_name):
@@ -501,10 +573,10 @@ func _tick_timers(p: Dictionary, config: Dictionary, delta_ms: float) -> void:
 
 	for timer_name: String in expired:
 		p["timers"].erase(timer_name)
-		var t: Dictionary = timers[timer_name]
+		var t: Dictionary = timers[timer_name] as Dictionary
 
 		var despawn: Variant = t.get("despawn")
-		if despawn != null and despawn != false:
+		if despawn is int:
 			_destroy_particle(p)
 			return
 
