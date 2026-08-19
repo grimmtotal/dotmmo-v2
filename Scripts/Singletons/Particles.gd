@@ -153,20 +153,12 @@ const TYPES = {
 				"resetTimers": []
 			}
 		},
-		"idleBehaviors": {
-			"changeVelocity": Vector2(-0.2, 0)
-		},
 		"timers": {
 			"Life": {
 				"despawn": 800,
 				"spawn": ["Smoke"],
 				"changeVelocity": Vector2.ZERO
 			},
-			"Flicker": {
-				"despawn": null,
-				"spawn": [],
-				"changeVelocity": Vector2(0.2, 0)
-			}
 		}
 	},
 	"Smoke": {

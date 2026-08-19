@@ -243,10 +243,12 @@ func _get_particles_at(pos: Vector2) -> Array:
 
 func _destroy_particle(p: Dictionary) -> void:
 	var id: int = p["id"]
+	var pos: Vector2 = p["pos"]
 	_remove_from_grid(p)
 	particles.erase(id)
 	_active_set.erase(id)
 	_active_dirty = true
+	_wake_neighbors(pos)
 
 
 func _flush_spawn_queue() -> void:
@@ -258,17 +260,26 @@ func _flush_spawn_queue() -> void:
 		if config.get("solid", false):
 			if _has_any_particle_at(pos):
 				continue
+		elif config.get("liquid", false):
+			if _has_solid_at(pos) or _has_liquid_at(pos):
+				continue
 		else:
 			if _has_solid_at(pos):
 				continue
 
 		_next_id += 1
+		var colors = config.get("colors", [])
+		var color_index: int = 0
+		if colors.size() > 0:
+			color_index = randi() % colors.size()
+
 		var p: Dictionary = {
 			"id": _next_id,
 			"type": type_name,
 			"pos": pos,
 			"velocity": config.get("initialGravity", Vector2.ZERO),
 			"timers": {},
+			"color_index": color_index,
 		}
 
 		for timer_name: String in config.get("timers", {}):
@@ -280,6 +291,7 @@ func _flush_spawn_queue() -> void:
 		_add_to_grid(p)
 		if _is_active(p):
 			_activate_particle(p["id"])
+		_wake_neighbors(pos)
 	_spawn_queue.clear()
 
 
@@ -382,8 +394,11 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 	if is_solid:
 		# Solids fall straight down and slide down diagonal slopes.
 		attempts = [Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1)]
+	elif is_liquid:
+		# Liquids fall and spread out horizontally when blocked.
+		attempts = [Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1), Vector2(-1, 0), Vector2(1, 0)]
 	else:
-		# Non-solids follow their velocity direction.
+		# Non-liquid non-solids follow their velocity direction.
 		var step: Vector2 = Vector2(signf(vel.x), signf(vel.y))
 		attempts = _unique_dirs([
 			Vector2(step.x, step.y),
@@ -438,6 +453,8 @@ func _resolve_movement(p: Dictionary, config: Dictionary) -> bool:
 		_handle_collisions(p, targets)
 		return true
 
+	# Nothing worked: settle the particle.
+	p["velocity"] = Vector2.ZERO
 	return false
 
 
@@ -460,10 +477,23 @@ func _cell_has_solid(_pos: Vector2, particle_list: Array) -> bool:
 
 
 func _move_particle(p: Dictionary, new_pos: Vector2) -> void:
+	var old_pos: Vector2 = p["pos"]
 	_remove_from_grid(p)
 	p["pos"] = new_pos
 	_add_to_grid(p)
 	_activate_particle(p["id"])
+	_wake_neighbors(old_pos)
+	_wake_neighbors(new_pos)
+
+
+func _wake_neighbors(pos: Vector2) -> void:
+	for dy: int in [-1, 0, 1]:
+		for dx: int in [-1, 0, 1]:
+			if dx == 0 and dy == 0:
+				continue
+			var ids = grid.get(pos + Vector2(dx, dy), [])
+			for id: int in ids:
+				_activate_particle(id)
 
 
 func _find_swap_target(targets: Array, moving_density: float) -> Dictionary:
@@ -493,6 +523,8 @@ func _swap_particles(a: Dictionary, b: Dictionary, a_pos: Vector2, b_pos: Vector
 	_add_to_grid(b)
 	_activate_particle(a["id"])
 	_activate_particle(b["id"])
+	_wake_neighbors(a_pos)
+	_wake_neighbors(b_pos)
 
 
 func _cell_has_liquid(_pos: Vector2, particle_list: Array) -> bool:

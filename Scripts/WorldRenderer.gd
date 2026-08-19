@@ -2,8 +2,6 @@ extends Node2D
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 
-const COLOR_CYCLE_MS: float = 500.0
-
 var _image: Image
 var _texture: ImageTexture
 var _sprite: Sprite2D
@@ -28,7 +26,6 @@ func _process(_delta: float) -> void:
 func _render_frame() -> void:
 	_image.fill(Color.TRANSPARENT)
 
-	var time_ms: int = Time.get_ticks_msec()
 	var grid: Dictionary = SimulationGlobal.grid
 	var particle_data: Dictionary = SimulationGlobal.particles
 
@@ -37,16 +34,16 @@ func _render_frame() -> void:
 		if ids.is_empty():
 			continue
 
-		var color: Color = _resolve_color(ids, particle_data, time_ms)
+		var color: Color = _resolve_color(ids, particle_data)
 		if pos.x >= 0 and pos.x < Global.WORLD_GRID_SIZE and pos.y >= 0 and pos.y < Global.WORLD_GRID_SIZE:
 			_image.set_pixel(int(pos.x), int(pos.y), color)
 
 	_texture.update(_image)
 
 
-func _resolve_color(ids: Array, particle_data: Dictionary, time_ms: int) -> Color:
+func _resolve_color(ids: Array, particle_data: Dictionary) -> Color:
 	if ids.size() == 1:
-		return _particle_color(particle_data[ids[0]] as Dictionary, time_ms)
+		return _particle_color(particle_data[ids[0]] as Dictionary)
 
 	# Blend colors when multiple non-solids share a cell.
 	var blended: Color = Color.TRANSPARENT
@@ -54,15 +51,15 @@ func _resolve_color(ids: Array, particle_data: Dictionary, time_ms: int) -> Colo
 		var p: Dictionary = particle_data.get(id, {}) as Dictionary
 		if p.is_empty():
 			continue
-		blended = blended.blend(_particle_color(p, time_ms))
+		blended = blended.blend(_particle_color(p))
 	return blended
 
 
-func _particle_color(p: Dictionary, time_ms: int) -> Color:
+func _particle_color(p: Dictionary) -> Color:
 	var config: Dictionary = Particles.get_config(p["type"])
 	var colors: Array = config.get("colors", [])
 	if colors.is_empty():
 		return Color.MAGENTA
 
-	var index: int = int(time_ms / COLOR_CYCLE_MS) % colors.size()
+	var index: int = p.get("color_index", 0)
 	return Color(colors[index])
