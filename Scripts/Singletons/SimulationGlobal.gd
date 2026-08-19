@@ -11,7 +11,7 @@ extends Node
 ##
 ## There are no per-particle objects. A particle *is* its cell: a type id, a
 ## colour variant, a life counter, a repeating-timer counter and a flow
-## direction, one byte each in parallel arrays.
+## direction, one entry each in parallel arrays.
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 
@@ -35,16 +35,22 @@ const ADAPT_TO: int = 30000
 const MAX_TICKS_PER_FRAME: int = 2
 
 # Timers are counted in 60Hz-equivalent ticks so durations stay constant in real
-# time even when the tick rate drops. One byte caps a duration at ~4.2s.
-const MAX_LIFE: int = 255
+# time even when the tick rate drops.
+#
+# The counters are 32-bit rather than packed into a byte alongside the rest of
+# the cell state. A byte caps a duration at 255 ticks, or ~4.2s, and anything
+# longer was silently clamped to that - a 40s timer quietly became a 4.2s one,
+# with nothing in the authored config to show for it. The cap below is only a
+# guard against a typo running away with a counter, not a design limit.
+const MAX_TIMER: int = 60 * 60 * 60  # one hour at 60Hz
 
 signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
 var _type: PackedByteArray
 var _variant: PackedByteArray
-var _life: PackedByteArray
-var _timer: PackedByteArray
+var _life: PackedInt32Array
+var _timer: PackedInt32Array
 var _flow: PackedByteArray
 var _clock: PackedByteArray
 
@@ -79,11 +85,11 @@ var _t_spread_y: PackedInt32Array
 # over and leaves it alone, spawning its products beside it each time it comes
 # round. Their products (Fire -> Smoke on death, Lava -> Fire on repeat) are
 # kept out of the packed arrays because most materials spawn nothing at all.
-var _t_life_min: PackedByteArray
-var _t_life_max: PackedByteArray
+var _t_life_min: PackedInt32Array
+var _t_life_max: PackedInt32Array
 var _t_death_spawn: Dictionary = {}
-var _t_every_min: PackedByteArray
-var _t_every_max: PackedByteArray
+var _t_every_min: PackedInt32Array
+var _t_every_max: PackedInt32Array
 var _t_every_spawn: Dictionary = {}
 
 # Reactions. `_react_mask[(a << 8) | b]` is 1 when material `a` responds to
@@ -220,7 +226,7 @@ func _timer_ticks(config: Dictionary, key: String) -> Vector2i:
 
 
 func _ms_to_ticks(ms: int) -> int:
-	return clampi(roundi(float(ms) * 0.001 * TICK_HZ_MAX), 1, MAX_LIFE)
+	return clampi(roundi(float(ms) * 0.001 * TICK_HZ_MAX), 1, MAX_TIMER)
 
 
 ## Products spawned when one of a material's timers fires: Fire -> Smoke as its
