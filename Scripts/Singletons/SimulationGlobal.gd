@@ -569,7 +569,7 @@ func _place(i: int, id: int) -> void:
 	_repaint_neighbourhood(i)
 
 	_count += 1
-	_activate(i)
+	_activate_if_exposed(i)
 
 
 func _erase(i: int) -> void:
@@ -594,7 +594,7 @@ func _relocate(from: int, to: int) -> void:
 	_repaint_neighbourhood(to)
 	_repaint_neighbourhood(from)
 
-	_activate(to)
+	_activate_if_exposed(to)
 	_wake_around(from)
 
 
@@ -620,8 +620,8 @@ func _swap(a: int, b: int) -> void:
 	_repaint_neighbourhood(a)
 	_repaint_neighbourhood(b)
 
-	_activate(a)
-	_activate(b)
+	_activate_if_exposed(a)
+	_activate_if_exposed(b)
 	_wake_around(a)
 	_wake_around(b)
 
@@ -673,13 +673,39 @@ func _activate(i: int) -> void:
 	_active_n += 1
 
 
-## Wakes the cells that could newly be able to move now that `i` changed: the
-## three above it and the two beside it. A cell being vacated cannot unblock
-## anything below it, so those are deliberately skipped.
+## Same as `_activate`, but skips cells that are fully surrounded by their own
+## type. Every move `_try_step` could attempt from such a cell targets a
+## same-type neighbour, and a same-type neighbour always blocks it (solids
+## refuse the swap outright; matching density blocks it for liquids/gases;
+## reactions never fire between two cells of the same type either) - so a
+## fully surrounded cell is provably stuck until one of its neighbours
+## changes. That makes it safe to leave it out of the active list: a large
+## settled or free-falling blob then costs work proportional to its surface,
+## not its volume. Whichever neighbour changes wakes this cell back up through
+## the normal `_wake_around` call at that neighbour, exactly like any other
+## dormant cell.
+##
+## A cell whose material has a life timer is always activated regardless,
+## since it needs to be in the active list to count down and despawn even
+## while fully surrounded (e.g. Smoke buried in the middle of a thick cloud).
+func _activate_if_exposed(i: int) -> void:
+	var t: int = _type[i]
+	if _t_life[t] > 0:
+		_activate(i)
+		return
+	for off: int in _nbr_off:
+		if _type[i + off] != t:
+			_activate(i)
+			return
+
+
+## Wakes the cells that could newly be able to move or react now that `i`
+## changed: the three above it and the two beside it. A cell being vacated
+## cannot unblock anything below it, so those are deliberately skipped.
 func _wake_around(i: int) -> void:
 	var pw: int = _pw
-	_activate(i - pw)
-	_activate(i - pw - 1)
-	_activate(i - pw + 1)
-	_activate(i - 1)
-	_activate(i + 1)
+	_activate_if_exposed(i - pw)
+	_activate_if_exposed(i - pw - 1)
+	_activate_if_exposed(i - pw + 1)
+	_activate_if_exposed(i - 1)
+	_activate_if_exposed(i + 1)
