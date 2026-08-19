@@ -155,8 +155,7 @@ func set_selected_particle(type_name: String) -> void:
 
 
 func clear_all_particles() -> void:
-	for pos: Vector2 in SimulationGlobal.grid.keys():
-		SimulationGlobal.despawnParticle(pos)
+	SimulationGlobal.clearAll()
 
 
 func _mouse_to_grid() -> Vector2:

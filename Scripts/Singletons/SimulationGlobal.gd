@@ -1,602 +1,638 @@
 extends Node
 
+## Flat-array falling-sand simulation.
+##
+## Cells live in padded PackedByteArrays indexed as `i = (y + 1) * _pw + (x + 1)`.
+## The one-cell border is filled with WALL, so movement never needs a bounds
+## check: the edge of the world simply blocks like any other solid.
+##
+## Exactly one particle occupies a cell. Displacement (gas rising through water,
+## lava sinking through water) is done by swapping the two cells.
+##
+## There are no per-particle objects. A particle *is* its cell: a type id, a
+## colour variant, a life counter and a flow direction, one byte each in
+## parallel arrays.
+
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 
-# --- Config ---
-# Target simulation tick rate in ms (60 ticks/sec).
-const TICK_MS: float = 1000.0 / 60.0
+# Reserved type ids. Real materials start at FIRST_TYPE.
+const EMPTY: int = 0
+const WALL: int = 1
+const FIRST_TYPE: int = 2
 
-# Never run more than this many ticks in a single frame. Without this a slow tick
-# makes the accumulator demand even more ticks next frame and the sim spirals.
-const MAX_TICKS_PER_FRAME: int = 3
+# Movement classes.
+const MOVE_STATIC: int = 0
+const MOVE_FALL: int = 1
+const MOVE_LIQUID: int = 2
+const MOVE_RISE: int = 3
 
-# Max velocity magnitude to prevent runaway values.
-const MAX_VELOCITY: float = 10.0
+# Adaptive pacing: ease the tick rate down as the world gets busy so a heavy
+# scene degrades in smoothness rather than collapsing into a slideshow.
+const TICK_HZ_MAX: float = 60.0
+const TICK_HZ_MIN: float = 30.0
+const ADAPT_FROM: int = 6000
+const ADAPT_TO: int = 30000
+const MAX_TICKS_PER_FRAME: int = 2
 
-# Movement candidates, ordered by preference. Precomputed so the hot loop never
-# allocates direction arrays.
-const SOLID_DIRS: Array = [Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1)]
-const LIQUID_DIRS: Array = [Vector2(0, 1), Vector2(-1, 1), Vector2(1, 1), Vector2(-1, 0), Vector2(1, 0)]
+# Life is counted in 60Hz-equivalent ticks so lifespans stay constant in real
+# time even when the tick rate drops. One byte caps a lifespan at ~4.2s.
+const MAX_LIFE: int = 255
 
-# Cells that may become free to move once a particle vacates a cell: above,
-# the two upper diagonals, and the two sides. Anything below is unaffected.
-const WAKE_OFFSETS: Array = [Vector2(0, -1), Vector2(-1, -1), Vector2(1, -1), Vector2(-1, 0), Vector2(1, 0)]
+signal world_cleared
 
-const EMPTY_IDS: Array = []
+# --- Cell state (padded, parallel arrays) ---
+var _type: PackedByteArray
+var _variant: PackedByteArray
+var _life: PackedByteArray
+var _flow: PackedByteArray
+var _clock: PackedByteArray
 
-# --- State ---
-# Spatial lookup: Vector2 position -> Array of particle ids.
-var grid: Dictionary = {}
+# --- Active list of flat cell indices, with a per-cell dedupe flag ---
+var _active: PackedInt32Array
+var _active_n: int = 0
+var _queued: PackedByteArray
 
-# All particles by id.
-var particles: Dictionary = {}
+# --- Render target: padded RGBA8, kept in sync as cells change ---
+var _pixels: PackedByteArray
+var _pixels_dirty: bool = true
 
-# Work list of particles that need updating this tick. Settled particles are
-# dropped from it and only return when a neighbour vacates a cell.
-var _active_particles: Array = []
-var _active_set: Dictionary = {}
+# --- Type tables, indexed by type id ---
+var _t_name: PackedStringArray = PackedStringArray()
+var _t_ids: Dictionary = {}
+var _t_move: PackedByteArray
+var _t_solid: PackedByteArray
+var _t_liquid: PackedByteArray
+var _t_reactive: PackedByteArray
+var _t_density: PackedFloat32Array
+var _t_life: PackedByteArray
+var _t_variants: PackedByteArray
+var _t_colour_base: PackedInt32Array
+var _t_colours: PackedInt64Array
 
-# Deferred mutation queues so we never modify grid while iterating it.
-var _spawn_queue: Array = []
-var _despawn_queue: Array = []
+# What a material spawns when its life timer expires. Most materials spawn
+# nothing; the few that do (Fire -> Smoke) are stored here.
+var _t_death_spawn: Dictionary = {}
 
-# type_name -> flattened, ready-to-read definition (see _build_definition).
-var _defs: Dictionary = {}
+# Reactions. `_react_mask[(a << 8) | b]` is 1 when material `a` responds to
+# touching material `b`; the details then come out of `_react`.
+var _react_mask: PackedByteArray
+var _react: Dictionary = {}
 
-# step Vector2 -> movement candidates, for gas-like particles.
-var _gas_dirs: Dictionary = {}
+var _w: int
+var _h: int
+var _pw: int
+var _ph: int
+var _cells: int
 
-var _next_id: int = 0
-var _tick_count: int = 0
+var _tick: int = 0
+var _tick_hz: float = TICK_HZ_MAX
+var _life_step: int = 1
 var _accumulator: float = 0.0
+var _count: int = 0
 
 
 func _ready() -> void:
-	for type_name: String in Particles.TYPES:
-		_defs[type_name] = _build_definition(type_name)
-	_build_gas_dirs()
+	_build_types()
+
+	_w = Global.WORLD_GRID_SIZE
+	_h = Global.WORLD_GRID_SIZE
+	_pw = _w + 2
+	_ph = _h + 2
+	_cells = _pw * _ph
+
+	_active.resize(8192)
+	clearAll()
 
 
-func _process(delta: float) -> void:
-	_accumulator += delta * 1000.0
-	var ticks: int = 0
-	while _accumulator >= TICK_MS and ticks < MAX_TICKS_PER_FRAME:
-		_accumulator -= TICK_MS
-		ticks += 1
-		tick(TICK_MS)
-	if _accumulator >= TICK_MS:
-		_accumulator = 0.0  # we fell behind; drop the backlog instead of spiralling
+# ---------------------------------------------------------------- type tables
+
+func _build_types() -> void:
+	var names: Array = Particles.TYPES.keys()
+	var total: int = names.size() + FIRST_TYPE
+
+	_t_name.resize(total)
+	_t_move.resize(total)
+	_t_solid.resize(total)
+	_t_liquid.resize(total)
+	_t_reactive.resize(total)
+	_t_density.resize(total)
+	_t_life.resize(total)
+	_t_variants.resize(total)
+	_t_colour_base.resize(total)
+
+	_react_mask.resize(65536)
+	_react_mask.fill(0)
+
+	# EMPTY and WALL share a transparent entry; walls are never painted.
+	_t_colours.append(0)
+	_t_name[WALL] = "Wall"
+	_t_solid[WALL] = 1
+	_t_variants[EMPTY] = 1
+	_t_variants[WALL] = 1
+
+	# Names must all be registered before reactions can be resolved.
+	for offset: int in names.size():
+		var id: int = FIRST_TYPE + offset
+		_t_ids[names[offset]] = id
+		_t_name[id] = names[offset]
+
+	for offset: int in names.size():
+		_configure_type(FIRST_TYPE + offset, Particles.get_config(names[offset]))
 
 
-# Definitions
-#
-# Reading nested config dictionaries in the hot loop was a large share of the
-# per-particle cost. Each type is flattened once here and the resulting
-# dictionary is stored directly on every particle as "def".
-
-func _build_definition(type_name: String) -> Dictionary:
-	var config: Dictionary = Particles.get_config(type_name)
-
-	var colors: Array = []
-	for value: String in config.get("colors", []):
-		colors.append(Color(value))
-	if colors.is_empty():
-		colors.append(Color.MAGENTA)
-
-	var idle_velocity: Vector2 = Vector2.ZERO
-	var idle_value: Variant = (config.get("idleBehaviors", {}) as Dictionary).get("changeVelocity")
-	if idle_value is Vector2:
-		idle_velocity = idle_value
-
-	var timers: Dictionary = config.get("timers", {}) as Dictionary
-	var initial_timers: Dictionary = {}
-	for timer_name: String in timers:
-		var despawn: Variant = (timers[timer_name] as Dictionary).get("despawn")
-		if despawn is int:
-			initial_timers[timer_name] = float(despawn)
-
-	# Interactions that neither destroy, spawn, nor reset a timer can never have
-	# an effect. Dropping them keeps them out of the collision hot path entirely.
-	var interactions: Dictionary = {}
-	for target: String in config.get("interactions", {}) as Dictionary:
-		var inter: Dictionary = (config["interactions"] as Dictionary)[target]
-		if inter["destroy"] or not inter["spawn"].is_empty() or not inter["resetTimers"].is_empty():
-			interactions[target] = inter
-
+func _configure_type(id: int, config: Dictionary) -> void:
 	var solid: bool = config.get("solid", false)
 	var liquid: bool = config.get("liquid", false)
+	var gravity: Vector2 = config.get("initialGravity", Vector2.ZERO)
 
-	return {
-		"type": type_name,
-		"solid": solid,
-		"liquid": liquid,
-		"density": float(config.get("density", 1.0)),
-		"gravity": config.get("initialGravity", Vector2.ZERO) as Vector2,
-		"idle_velocity": idle_velocity,
-		"colors": colors,
-		"interactions": interactions,
-		"timers": timers,
-		"initial_timers": initial_timers,
-		"dirs": SOLID_DIRS if solid else (LIQUID_DIRS if liquid else EMPTY_IDS),
-	}
+	_t_solid[id] = 1 if solid else 0
+	_t_liquid[id] = 1 if liquid else 0
+	_t_density[id] = float(config.get("density", 1.0))
+	_t_life[id] = _lifespan_ticks(config)
+	_t_death_spawn[id] = _death_spawn(config)
+
+	if liquid:
+		_t_move[id] = MOVE_LIQUID
+	elif gravity.y < 0.0:
+		_t_move[id] = MOVE_RISE
+	elif gravity.y > 0.0:
+		_t_move[id] = MOVE_FALL
+	else:
+		_t_move[id] = MOVE_STATIC
+
+	var colours: Array = config.get("colors", [])
+	_t_colour_base[id] = _t_colours.size()
+	_t_variants[id] = maxi(colours.size(), 1)
+	if colours.is_empty():
+		_t_colours.append(_to_rgba32(Color.MAGENTA))
+	for value: String in colours:
+		_t_colours.append(_to_rgba32(Color(value)))
+
+	_configure_reactions(id, config)
 
 
-func _build_gas_dirs() -> void:
-	for sy: int in [-1, 0, 1]:
-		for sx: int in [-1, 0, 1]:
-			var step: Vector2 = Vector2(sx, sy)
-			var dirs: Array = []
-			for dir: Vector2 in [step, Vector2(0, sy), Vector2(sx, 0)]:
-				if dir != Vector2.ZERO and not dirs.has(dir):
-					dirs.append(dir)
-			_gas_dirs[step] = dirs
+## Collapses the timer table down to a single lifespan. Every material in
+## Particles.gd uses at most one despawn timer, so a per-cell byte can replace
+## the old per-particle timer dictionary.
+func _lifespan_ticks(config: Dictionary) -> int:
+	for timer_name: String in config.get("timers", {}) as Dictionary:
+		var despawn: Variant = ((config["timers"] as Dictionary)[timer_name] as Dictionary).get("despawn")
+		if despawn is int:
+			return clampi(roundi(float(despawn) * 0.001 * TICK_HZ_MAX), 1, MAX_LIFE)
+	return 0
 
 
-# Public API
+## Products spawned when a material's life timer expires (e.g. Fire -> Smoke).
+func _death_spawn(config: Dictionary) -> PackedByteArray:
+	var spawn: PackedByteArray = PackedByteArray()
+	for timer_name: String in config.get("timers", {}) as Dictionary:
+		for spawn_name: String in ((config["timers"] as Dictionary)[timer_name] as Dictionary).get("spawn", []):
+			if _t_ids.has(spawn_name):
+				spawn.append(_t_ids[spawn_name])
+	return spawn
+
+
+func _configure_reactions(id: int, config: Dictionary) -> void:
+	for target: String in config.get("interactions", {}) as Dictionary:
+		if not _t_ids.has(target):
+			continue
+
+		var inter: Dictionary = (config["interactions"] as Dictionary)[target]
+		var destroy: bool = inter["destroy"]
+		var reset: bool = not inter["resetTimers"].is_empty() and _t_life[id] > 0
+
+		var spawn: PackedByteArray = PackedByteArray()
+		for spawn_name: String in inter["spawn"]:
+			if _t_ids.has(spawn_name):
+				spawn.append(_t_ids[spawn_name])
+
+		# A reaction that neither destroys, spawns, nor restarts a life timer can
+		# never have an observable effect, so it stays out of the hot path.
+		if not destroy and spawn.is_empty() and not reset:
+			continue
+
+		var key: int = (id << 8) | int(_t_ids[target])
+		_react_mask[key] = 1
+		_react[key] = {"destroy": destroy, "spawn": spawn, "reset": reset}
+		_t_reactive[id] = 1
+
+
+## Packs to little-endian RGBA8, matching Image.FORMAT_RGBA8 byte order.
+func _to_rgba32(colour: Color) -> int:
+	return colour.r8 | (colour.g8 << 8) | (colour.b8 << 16) | (colour.a8 << 24)
+
+
+# ------------------------------------------------------------------ public API
+
+func clearAll() -> void:
+	_type.resize(_cells)
+	_variant.resize(_cells)
+	_life.resize(_cells)
+	_flow.resize(_cells)
+	_clock.resize(_cells)
+	_queued.resize(_cells)
+	_pixels.resize(_cells * 4)
+
+	_type.fill(EMPTY)
+	_variant.fill(0)
+	_life.fill(0)
+	_flow.fill(0)
+	_clock.fill(0)
+	_queued.fill(0)
+	_pixels.fill(0)
+
+	var last_row: int = (_ph - 1) * _pw
+	for x: int in _pw:
+		_type[x] = WALL
+		_type[last_row + x] = WALL
+	for y: int in _ph:
+		var row: int = y * _pw
+		_type[row] = WALL
+		_type[row + _pw - 1] = WALL
+
+	_active_n = 0
+	_count = 0
+	_pixels_dirty = true
+	world_cleared.emit()
+
 
 func spawnParticle(type_name: String, pos: Vector2) -> bool:
-	var def: Dictionary = _defs.get(type_name, {}) as Dictionary
-	if def.is_empty():
+	if not _t_ids.has(type_name):
 		push_error("Unknown particle type: ", type_name)
 		return false
+	return spawnAt(_t_ids[type_name], int(pos.x), int(pos.y))
 
-	if not _can_occupy(def, pos):
+
+func spawnAt(id: int, x: int, y: int) -> bool:
+	if x < 0 or y < 0 or x >= _w or y >= _h:
 		return false
 
-	_spawn_queue.append({"type": type_name, "pos": pos})
+	var i: int = (y + 1) * _pw + (x + 1)
+	if _type[i] != EMPTY:
+		return false
+
+	_place(i, id)
+	_wake_around(i)
 	return true
 
 
 func despawnParticle(pos: Vector2) -> int:
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	for id: int in ids:
-		_despawn_queue.append(id)
-	return ids.size()
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return 0
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	if _type[i] < FIRST_TYPE:
+		return 0
+
+	_erase(i)
+	_wake_around(i)
+	return 1
 
 
+## Snapshot of a single cell for the inspector. Never called from the hot loop.
 func getParticle(pos: Vector2) -> Dictionary:
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	if ids.is_empty():
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
 		return {}
-	return particles.get(ids[0], {}) as Dictionary
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	var t: int = _type[i]
+	if t < FIRST_TYPE:
+		return {}
+
+	var life_ms: int = 0
+	if _t_life[t] > 0:
+		life_ms = roundi(float(_life[i]) / TICK_HZ_MAX * 1000.0)
+
+	return {
+		"type": _t_name[t],
+		"pos": Vector2(x, y),
+		"density": _t_density[t],
+		"solid": _t_solid[t] != 0,
+		"liquid": _t_liquid[t] != 0,
+		"life_ms": life_ms,
+	}
 
 
-func getParticlesAt(pos: Vector2) -> Array:
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	var result: Array = []
-	for id: int in ids:
-		var p: Dictionary = particles.get(id, {}) as Dictionary
-		if not p.is_empty():
-			result.append(p)
-	return result
+func getPixels() -> PackedByteArray:
+	return _pixels
 
 
-func getParticleById(id: int) -> Dictionary:
-	return particles.get(id, {}) as Dictionary
+func consumePixelsDirty() -> bool:
+	var was_dirty: bool = _pixels_dirty
+	_pixels_dirty = false
+	return was_dirty
 
 
-func moveParticle(from: Vector2, to: Vector2) -> bool:
-	var ids: Array = grid.get(from, EMPTY_IDS)
-	if ids.is_empty():
-		return false
-	return moveParticleById(ids[0], to)
-
-
-func setParticleVelocity(pos: Vector2, velocity: Vector2) -> bool:
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	if ids.is_empty():
-		return false
-	return setParticleVelocityById(ids[0], velocity)
-
-
-func moveParticleById(id: int, to: Vector2) -> bool:
-	var p: Dictionary = particles.get(id, {}) as Dictionary
-	if p.is_empty() or not _can_occupy(p["def"], to):
-		return false
-	_move_particle(p, to)
-	return true
-
-
-func setParticleVelocityById(id: int, velocity: Vector2) -> bool:
-	var p: Dictionary = particles.get(id, {}) as Dictionary
-	if p.is_empty():
-		return false
-	p["velocity"] = velocity
-	_activate_particle(id)
-	return true
+func getPaddedSize() -> Vector2i:
+	return Vector2i(_pw, _ph)
 
 
 func getActiveCount() -> int:
-	return _active_particles.size()
+	return _active_n
 
 
-func tick(delta_ms: float) -> void:
-	_tick_count += 1
-
-	_flush_despawn_queue()
-	_flush_spawn_queue()
-	_step_active(delta_ms)
+func getParticleCount() -> int:
+	return _count
 
 
-# Occupancy rules
-
-func _in_bounds(pos: Vector2) -> bool:
-	return pos.x >= 0.0 and pos.y >= 0.0 \
-		and pos.x < Global.WORLD_GRID_SIZE and pos.y < Global.WORLD_GRID_SIZE
+func getTickRate() -> float:
+	return _tick_hz
 
 
-func _can_occupy(def: Dictionary, pos: Vector2) -> bool:
-	if not _in_bounds(pos):
+# --------------------------------------------------------------------- pacing
+
+func _process(delta: float) -> void:
+	_adapt_tick_rate(delta)
+
+	var interval: float = 1.0 / _tick_hz
+	_accumulator += delta
+
+	var ticks: int = 0
+	while _accumulator >= interval and ticks < MAX_TICKS_PER_FRAME:
+		_accumulator -= interval
+		ticks += 1
+		_step()
+
+	if _accumulator >= interval:
+		_accumulator = 0.0  # fell behind; drop the backlog instead of spiralling
+
+
+func _adapt_tick_rate(delta: float) -> void:
+	var target: float = TICK_HZ_MAX
+	if _active_n > ADAPT_FROM:
+		var load: float = float(_active_n - ADAPT_FROM) / float(ADAPT_TO - ADAPT_FROM)
+		target = lerpf(TICK_HZ_MAX, TICK_HZ_MIN, clampf(load, 0.0, 1.0))
+
+	_tick_hz = move_toward(_tick_hz, target, 60.0 * delta)
+	_life_step = maxi(roundi(TICK_HZ_MAX / _tick_hz), 1)
+
+
+# ------------------------------------------------------------------- the step
+
+## The whole update deliberately lives in one function. In GDScript both function
+## calls and member lookups cost real time, and this loop runs once per awake
+## cell per tick, so the movement rules are inlined rather than factored out.
+func _step() -> void:
+	if _active_n == 0:
+		return
+
+	_tick = (_tick + 1) & 0xFF
+	var tick: int = _tick
+	var pw: int = _pw
+	var life_step: int = _life_step
+
+	# Falling only reads correctly when the lowest rows move first. Flat indices
+	# sort by row, so an ascending sort walked backwards gives bottom-up order.
+	var pending: PackedInt32Array = _active.slice(0, _active_n)
+	pending.sort()
+
+	var count: int = _active_n
+	for k: int in count:
+		_queued[pending[k]] = 0
+	_active_n = 0
+
+	# Alternating the diagonal preference each tick stops piles from leaning.
+	var flip: bool = (tick & 1) == 1
+
+	for k: int in range(count - 1, -1, -1):
+		var i: int = pending[k]
+		var t: int = _type[i]
+		if t < FIRST_TYPE:
+			continue
+		if _clock[i] == tick:
+			continue  # something already moved into this cell this tick
+
+		# --- lifespan ---
+		if _t_life[t] != 0:
+			var remaining: int = _life[i] - life_step
+			if remaining <= 0:
+				var death_spawn: PackedByteArray = _t_death_spawn.get(t, PackedByteArray())
+				if death_spawn.is_empty():
+					_erase(i)
+				else:
+					_erase(i)
+					_place(i, death_spawn[0])
+					for extra: int in range(1, death_spawn.size()):
+						_spawn_beside(i, death_spawn[extra])
+				_wake_around(i)
+				continue
+			_life[i] = remaining
+			_activate(i)  # a counting-down cell always needs another look
+
+		# --- reactions against the four orthogonal neighbours ---
+		if _t_reactive[t] != 0:
+			var base: int = t << 8
+			var other: int = _type[i - pw]
+			if other >= FIRST_TYPE and _react_mask[base | other] != 0 and _apply_reaction(i, base | other):
+				continue
+			other = _type[i - 1]
+			if other >= FIRST_TYPE and _react_mask[base | other] != 0 and _apply_reaction(i, base | other):
+				continue
+			other = _type[i + 1]
+			if other >= FIRST_TYPE and _react_mask[base | other] != 0 and _apply_reaction(i, base | other):
+				continue
+			other = _type[i + pw]
+			if other >= FIRST_TYPE and _react_mask[base | other] != 0 and _apply_reaction(i, base | other):
+				continue
+
+		# --- movement ---
+		var move: int = _t_move[t]
+		if move == MOVE_STATIC:
+			continue
+
+		var density: float = _t_density[t]
+		var straight: int = i - pw if move == MOVE_RISE else i + pw
+
+		if _try_step(i, straight, t, density, true):
+			continue
+
+		var near: int = straight - 1 if flip else straight + 1
+		var far: int = straight + 1 if flip else straight - 1
+		if _try_step(i, near, t, density, true):
+			continue
+		if _try_step(i, far, t, density, true):
+			continue
+
+		if move == MOVE_FALL:
+			continue  # powders pile up rather than spreading sideways
+
+		# Liquids and gases spread sideways, keeping their direction until they
+		# are blocked, so they flow rather than jitter on the spot.
+		var dir: int = 1 if _flow[i] != 0 else -1
+		if _try_step(i, i + dir, t, density, false):
+			continue
+		_flow[i] = 0 if _flow[i] != 0 else 1
+		_try_step(i, i - dir, t, density, false)
+
+
+## Attempts to move cell `from` into `to`. `vertical` enables density swapping,
+## which only makes sense when gravity or buoyancy is doing the work.
+func _try_step(from: int, to: int, t: int, density: float, vertical: bool) -> bool:
+	var other: int = _type[to]
+
+	if other == EMPTY:
+		_relocate(from, to)
+		return true
+
+	if other == WALL or _t_solid[other] != 0:
 		return false
 
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	if ids.is_empty():
-		return true
-	if def["solid"]:
-		return false  # solids never share a cell
+	if not vertical:
+		return false  # sideways movement never displaces anything
 
-	var wants_liquid_space: bool = def["liquid"]
-	for id: int in ids:
-		var other: Dictionary = particles.get(id, {}) as Dictionary
-		if other.is_empty():
-			continue
-		var other_def: Dictionary = other["def"]
-		if other_def["solid"]:
+	# Heavier material sinks and lighter material rises, by trading places.
+	if _t_move[t] == MOVE_RISE:
+		if _t_density[other] <= density:
 			return false
-		if wants_liquid_space and other_def["liquid"]:
-			return false  # two liquids cannot share a cell
+	elif _t_density[other] >= density:
+		return false
+
+	_swap(from, to)
 	return true
 
 
-func _cell_blocks(def: Dictionary, ids: Array) -> bool:
-	if def["solid"]:
-		return true  # caller only reaches here for non-empty cells
-	var wants_liquid_space: bool = def["liquid"]
-	for id: int in ids:
-		var other: Dictionary = particles.get(id, {}) as Dictionary
-		if other.is_empty():
-			continue
-		var other_def: Dictionary = other["def"]
-		if other_def["solid"]:
-			return true
-		if wants_liquid_space and other_def["liquid"]:
-			return true
-	return false
-
-
-func _cell_has_solid(ids: Array) -> bool:
-	for id: int in ids:
-		var other: Dictionary = particles.get(id, {}) as Dictionary
-		if not other.is_empty() and other["def"]["solid"]:
-			return true
-	return false
-
-
-# Active list
-
-func _activate_particle(id: int) -> void:
-	if _active_set.has(id):
-		return
-	_active_set[id] = true
-	_active_particles.append(id)
-
-
-func _is_active(p: Dictionary) -> bool:
-	if p["velocity"] != Vector2.ZERO:
-		return true
-	if not p["timers"].is_empty():
-		return true
-	return p["def"]["idle_velocity"] != Vector2.ZERO
-
-
-func _wake_neighbors(pos: Vector2) -> void:
-	for offset: Vector2 in WAKE_OFFSETS:
-		for id: int in grid.get(pos + offset, EMPTY_IDS):
-			_activate_particle(id)
-
-
-# Grid
-
-func _add_to_grid(p: Dictionary) -> void:
-	var pos: Vector2 = p["pos"]
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	if ids.is_empty():
-		grid[pos] = [p["id"]]
-	else:
-		ids.append(p["id"])
-
-
-func _remove_from_grid(p: Dictionary) -> void:
-	var pos: Vector2 = p["pos"]
-	var ids: Array = grid.get(pos, EMPTY_IDS)
-	if ids.is_empty():
-		return
-	ids.erase(p["id"])
-	if ids.is_empty():
-		grid.erase(pos)
-
-
-func _destroy_particle(p: Dictionary) -> void:
-	var pos: Vector2 = p["pos"]
-	_remove_from_grid(p)
-	particles.erase(p["id"])
-	_active_set.erase(p["id"])
-	_wake_neighbors(pos)
-
-
-# Queues
-
-func _flush_spawn_queue() -> void:
-	if _spawn_queue.is_empty():
-		return
-
-	for item: Dictionary in _spawn_queue:
-		var pos: Vector2 = item["pos"]
-		var def: Dictionary = _defs[item["type"]]
-		if not _can_occupy(def, pos):
-			continue
-
-		_next_id += 1
-		var colors: Array = def["colors"]
-		var p: Dictionary = {
-			"id": _next_id,
-			"type": def["type"],
-			"def": def,
-			"pos": pos,
-			"velocity": def["gravity"],
-			"color": colors[randi() % colors.size()],
-			"timers": def["initial_timers"].duplicate(),
-		}
-
-		particles[_next_id] = p
-		_add_to_grid(p)
-		if _is_active(p):
-			_activate_particle(_next_id)
-		_wake_neighbors(pos)
-
-	_spawn_queue.clear()
-
-
-func _flush_despawn_queue() -> void:
-	if _despawn_queue.is_empty():
-		return
-
-	for id: int in _despawn_queue:
-		var p: Dictionary = particles.get(id, {}) as Dictionary
-		if not p.is_empty():
-			_destroy_particle(p)
-	_despawn_queue.clear()
-
-
-# Simulation step
-
-func _step_active(delta_ms: float) -> void:
-	if _active_particles.is_empty():
-		return
-
-	# Swap out the work list. Anything that still needs simulating re-queues
-	# itself into the fresh list, so settled particles simply fall out.
-	var pending: Array = _active_particles
-	_active_particles = []
-	_active_set.clear()
-
-	for id: int in pending:
-		var p: Dictionary = particles.get(id, {}) as Dictionary
-		if not p.is_empty():
-			_update_particle(p, delta_ms)
-
-
-func _update_particle(p: Dictionary, delta_ms: float) -> void:
-	var def: Dictionary = p["def"]
-	var velocity: Vector2 = p["velocity"]
-
-	velocity += def["gravity"]
-	velocity += def["idle_velocity"]
-	p["velocity"] = velocity.clamp(
-		Vector2(-MAX_VELOCITY, -MAX_VELOCITY), Vector2(MAX_VELOCITY, MAX_VELOCITY)
-	)
-
-	_resolve_movement(p, def)
-	if not particles.has(p["id"]):
-		return  # destroyed during movement
-
-	if not p["timers"].is_empty():
-		_tick_timers(p, def, delta_ms)
-		if not particles.has(p["id"]):
-			return
-
-	if _is_active(p):
-		_activate_particle(p["id"])
-
-
-func _resolve_movement(p: Dictionary, def: Dictionary) -> void:
-	var velocity: Vector2 = p["velocity"]
-	if velocity == Vector2.ZERO:
-		return
-
-	var dirs: Array = def["dirs"]
-	if dirs.is_empty():
-		dirs = _gas_dirs[Vector2(signf(velocity.x), signf(velocity.y))]
-
-	var pos: Vector2 = p["pos"]
-	var density: float = def["density"]
-
-	for dir: Vector2 in dirs:
-		var target: Vector2 = pos + dir
-		if not _in_bounds(target):
-			continue  # world edges act as walls
-
-		var ids: Array = grid.get(target, EMPTY_IDS)
-
-		if ids.is_empty():
-			_move_particle(p, target)
-			return
-
-		# Solids block everything, so interactions are all that can happen.
-		if _cell_has_solid(ids):
-			if _handle_collisions(p, def, ids):
-				return
-			continue
-
-		# Denser particles sink through lighter ones on the way down.
-		if dir.y > 0:
-			var lighter: Dictionary = _find_swap_target(ids, density)
-			if not lighter.is_empty():
-				_swap_particles(p, lighter)
-				return
-
-		# Cannot sink, so respect the sharing rules for this material.
-		if _cell_blocks(def, ids):
-			if _handle_collisions(p, def, ids):
-				return
-			continue
-
-		# Sharing is allowed. React first, then move in if we survived, so the
-		# mover never ends up reacting against itself.
-		if _handle_collisions(p, def, ids):
-			return
-		_move_particle(p, target)
-		return
-
-	# Nowhere to go: the particle is supported, so let it settle and sleep.
-	p["velocity"] = Vector2.ZERO
-
-
-func _move_particle(p: Dictionary, new_pos: Vector2) -> void:
-	var old_pos: Vector2 = p["pos"]
-	_remove_from_grid(p)
-	p["pos"] = new_pos
-	_add_to_grid(p)
-	_activate_particle(p["id"])
-	_wake_neighbors(old_pos)
-
-
-func _find_swap_target(ids: Array, density: float) -> Dictionary:
-	var lightest: Dictionary = {}
-	var lightest_density: float = density
-
-	for id: int in ids:
-		var other: Dictionary = particles.get(id, {}) as Dictionary
-		if other.is_empty():
-			continue
-		var other_def: Dictionary = other["def"]
-		if other_def["solid"]:
-			continue
-		if other_def["density"] < lightest_density:
-			lightest_density = other_def["density"]
-			lightest = other
-
-	return lightest
-
-
-func _swap_particles(a: Dictionary, b: Dictionary) -> void:
-	var a_pos: Vector2 = a["pos"]
-	var b_pos: Vector2 = b["pos"]
-
-	_remove_from_grid(a)
-	_remove_from_grid(b)
-	a["pos"] = b_pos
-	b["pos"] = a_pos
-	_add_to_grid(a)
-	_add_to_grid(b)
-
-	# Both are moving, and b just got displaced upwards, so it needs a fresh look.
-	b["velocity"] = b["def"]["gravity"]
-	_activate_particle(a["id"])
-	_activate_particle(b["id"])
-	_wake_neighbors(a_pos)
-	_wake_neighbors(b_pos)
-
-
-# Interactions
-
-func _handle_collisions(mover: Dictionary, mover_def: Dictionary, ids: Array) -> bool:
-	if not _reaction_possible(mover_def, ids):
-		return false
-
-	# Reactions destroy particles, which mutates this cell's id list, so iterate
-	# a snapshot. Only taken when a reaction is actually on the table.
-	for id: int in ids.duplicate():
-		var target: Dictionary = particles.get(id, {}) as Dictionary
-		if target.is_empty():
-			continue
-
-		var target_def: Dictionary = target["def"]
-
-		if _apply_interaction(mover, mover_def, target_def["type"]):
-			return true  # mover destroyed itself
-
-		_apply_interaction(target, target_def, mover_def["type"])
-
-	return false
-
-
-## Cheap read-only scan so the common "nothing reacts" case allocates nothing.
-func _reaction_possible(mover_def: Dictionary, ids: Array) -> bool:
-	var mover_interactions: Dictionary = mover_def["interactions"]
-
-	for id: int in ids:
-		var other: Dictionary = particles.get(id, {}) as Dictionary
-		if other.is_empty():
-			continue
-		var other_def: Dictionary = other["def"]
-		if mover_interactions.has(other_def["type"]):
-			return true
-		if (other_def["interactions"] as Dictionary).has(mover_def["type"]):
+## Returns true when cell `i` no longer holds the material that reacted.
+func _apply_reaction(i: int, key: int) -> bool:
+	var reaction: Dictionary = _react[key]
+	var spawn: PackedByteArray = reaction["spawn"]
+
+	if reaction["reset"]:
+		_life[i] = _t_life[_type[i]]
+		_activate(i)
+
+	if reaction["destroy"]:
+		_erase(i)
+		if spawn.is_empty():
+			_wake_around(i)
 			return true
 
-	return false
-
-
-## Applies subject's reaction to touching `object_type`. Returns true if the
-## subject destroyed itself.
-func _apply_interaction(subject: Dictionary, subject_def: Dictionary, object_type: String) -> bool:
-	var interactions: Dictionary = subject_def["interactions"]
-	if not interactions.has(object_type):
-		return false
-
-	var inter: Dictionary = interactions[object_type]
-
-	for spawn_type: String in inter["spawn"]:
-		_spawn_queue.append({"type": spawn_type, "pos": subject["pos"]})
-
-	if inter["destroy"]:
-		_destroy_particle(subject)
+		# The first product takes over the vacated cell; any others go beside it.
+		_place(i, spawn[0])
+		for extra: int in range(1, spawn.size()):
+			_spawn_beside(i, spawn[extra])
+		_wake_around(i)
 		return true
 
-	# Only wake the subject if a timer actually restarted. Waking on every touch
-	# would stop neighbouring particles from ever settling.
-	var initial_timers: Dictionary = subject_def["initial_timers"]
-	for timer_name: String in inter["resetTimers"]:
-		if initial_timers.has(timer_name):
-			subject["timers"][timer_name] = initial_timers[timer_name]
-			_activate_particle(subject["id"])
+	for id: int in spawn:
+		_spawn_beside(i, id)
 
 	return false
 
 
-func _tick_timers(p: Dictionary, def: Dictionary, delta_ms: float) -> void:
-	var timers: Dictionary = def["timers"]
-	var running: Dictionary = p["timers"]
-	var expired: Array = []
+func _spawn_beside(i: int, id: int) -> void:
+	var pw: int = _pw
+	if _type[i - pw] == EMPTY:
+		_place(i - pw, id)
+		_wake_around(i - pw)
+	elif _type[i - 1] == EMPTY:
+		_place(i - 1, id)
+		_wake_around(i - 1)
+	elif _type[i + 1] == EMPTY:
+		_place(i + 1, id)
+		_wake_around(i + 1)
+	elif _type[i + pw] == EMPTY:
+		_place(i + pw, id)
+		_wake_around(i + pw)
 
-	for timer_name: String in running:
-		running[timer_name] -= delta_ms
-		if running[timer_name] <= 0.0:
-			expired.append(timer_name)
 
-	for timer_name: String in expired:
-		running.erase(timer_name)
-		var timer: Dictionary = timers.get(timer_name, {}) as Dictionary
-		if timer.is_empty():
-			continue
+# ------------------------------------------------------------ cell primitives
 
-		if timer["despawn"] is int:
-			_destroy_particle(p)
-			return
+func _place(i: int, id: int) -> void:
+	var variant: int = randi() % int(_t_variants[id])
+	_type[i] = id
+	_variant[i] = variant
+	_life[i] = _t_life[id]
+	_flow[i] = randi() & 1
+	_clock[i] = _tick
 
-		for spawn_type: String in timer["spawn"]:
-			_spawn_queue.append({"type": spawn_type, "pos": p["pos"]})
+	_pixels.encode_u32(i * 4, _t_colours[_t_colour_base[id] + variant])
+	_pixels_dirty = true
 
-		if timer["changeVelocity"] is Vector2:
-			p["velocity"] += timer["changeVelocity"]
+	_count += 1
+	_activate(i)
+
+
+func _erase(i: int) -> void:
+	_type[i] = EMPTY
+	_life[i] = 0
+
+	_pixels.encode_u32(i * 4, 0)
+	_pixels_dirty = true
+
+	_count -= 1
+
+
+func _relocate(from: int, to: int) -> void:
+	_type[to] = _type[from]
+	_variant[to] = _variant[from]
+	_life[to] = _life[from]
+	_flow[to] = _flow[from]
+	_clock[to] = _tick
+
+	_type[from] = EMPTY
+	_life[from] = 0
+
+	_pixels.encode_u32(to * 4, _pixels.decode_u32(from * 4))
+	_pixels.encode_u32(from * 4, 0)
+	_pixels_dirty = true
+
+	_activate(to)
+	_wake_around(from)
+
+
+func _swap(a: int, b: int) -> void:
+	var t: int = _type[a]
+	var v: int = _variant[a]
+	var l: int = _life[a]
+	var f: int = _flow[a]
+
+	_type[a] = _type[b]
+	_variant[a] = _variant[b]
+	_life[a] = _life[b]
+	_flow[a] = _flow[b]
+
+	_type[b] = t
+	_variant[b] = v
+	_life[b] = l
+	_flow[b] = f
+
+	_clock[a] = _tick
+	_clock[b] = _tick
+
+	var colour_a: int = _pixels.decode_u32(a * 4)
+	_pixels.encode_u32(a * 4, _pixels.decode_u32(b * 4))
+	_pixels.encode_u32(b * 4, colour_a)
+	_pixels_dirty = true
+
+	_activate(a)
+	_activate(b)
+	_wake_around(a)
+	_wake_around(b)
+
+
+# --------------------------------------------------------------- active list
+
+func _activate(i: int) -> void:
+	if _queued[i] != 0:
+		return
+	_queued[i] = 1
+	if _active_n >= _active.size():
+		_active.resize(_active.size() * 2)
+	_active[_active_n] = i
+	_active_n += 1
+
+
+## Wakes the cells that could newly be able to move now that `i` changed: the
+## three above it and the two beside it. A cell being vacated cannot unblock
+## anything below it, so those are deliberately skipped.
+func _wake_around(i: int) -> void:
+	var pw: int = _pw
+	_activate(i - pw)
+	_activate(i - pw - 1)
+	_activate(i - pw + 1)
+	_activate(i - 1)
+	_activate(i + 1)

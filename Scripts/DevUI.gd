@@ -40,9 +40,10 @@ func _process(delta: float) -> void:
 		return
 	_stats_countdown = STATS_INTERVAL
 
-	%Stats.text = "%d particles  ·  %d awake  ·  %d fps" % [
-		SimulationGlobal.particles.size(),
+	%Stats.text = "%d particles  ·  %d awake  ·  %d Hz  ·  %d fps" % [
+		SimulationGlobal.getParticleCount(),
 		SimulationGlobal.getActiveCount(),
+		roundi(SimulationGlobal.getTickRate()),
 		Engine.get_frames_per_second(),
 	]
 
