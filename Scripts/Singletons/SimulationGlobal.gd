@@ -55,6 +55,10 @@ const MAX_TIMER: int = 60 * 60 * 60  # one hour at 60Hz
 const CHUNK_SHIFT: int = 5
 const CHUNK: int = 1 << CHUNK_SHIFT
 
+# Reaction probabilities are fixed-point over this range; CERTAIN always fires.
+const CHANCE_MASK: int = 0xFFFF
+const CERTAIN: int = 0x10000
+
 signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
@@ -285,19 +289,25 @@ func _configure_reactions(id: int, config: Dictionary) -> void:
 		var destroy: bool = inter["destroy"]
 		var reset: bool = not inter["resetTimers"].is_empty() and _t_life_min[id] > 0
 
+		# Held as a 16-bit threshold rather than a float so the roll is one
+		# mask and one compare, and so it stays exact when the simulation is
+		# eventually made to reproduce bit for bit from a seed.
+		var chance: int = clampi(roundi(float(inter.get("chance", 1.0)) * float(CERTAIN)), 0, CERTAIN)
+
 		var spawn: PackedByteArray = PackedByteArray()
 		for spawn_name: String in inter["spawn"]:
 			if _t_ids.has(spawn_name):
 				spawn.append(_t_ids[spawn_name])
 
 		# A reaction that neither destroys, spawns, nor restarts a life timer can
-		# never have an observable effect, so it stays out of the hot path.
-		if not destroy and spawn.is_empty() and not reset:
+		# never have an observable effect, and one that never rolls true can
+		# never happen at all, so both stay out of the hot path.
+		if chance == 0 or (not destroy and spawn.is_empty() and not reset):
 			continue
 
 		var key: int = (id << 8) | int(_t_ids[target])
 		_react_mask[key] = 1
-		_react[key] = {"destroy": destroy, "spawn": spawn, "reset": reset}
+		_react[key] = {"destroy": destroy, "spawn": spawn, "reset": reset, "chance": chance}
 		_t_reactive[id] = 1
 
 
@@ -693,6 +703,22 @@ func _try_step(from: int, to: int, t: int, density: float, vertical: bool) -> bo
 ## Returns true when cell `i` no longer holds the material that reacted.
 func _apply_reaction(i: int, key: int) -> bool:
 	var reaction: Dictionary = _react[key]
+
+	# A reaction that is not certain gets one roll per tick of contact, so the
+	# odds of it having happened climb the longer the two stay touching.
+	#
+	# A losing roll has to put the cell back in the active list itself. Nothing
+	# else will: settled material drops out precisely because it cannot move,
+	# and it is only woken again when a neighbour changes - so a plant beside a
+	# steady flame would get one roll, ever, and a 4%-per-tick burn would spread
+	# at 4% per fire rather than creeping through a bed the way it reads. The
+	# cell stops re-arming as soon as the reagent beside it is gone, because
+	# then the step loop no longer reaches this function at all.
+	var chance: int = reaction["chance"]
+	if chance != CERTAIN and (randi() & CHANCE_MASK) >= chance:
+		_activate(i)
+		return false
+
 	var spawn: PackedByteArray = reaction["spawn"]
 
 	if reaction["reset"]:

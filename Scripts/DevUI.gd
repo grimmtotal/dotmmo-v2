@@ -192,7 +192,12 @@ func _reaction_lines(config: Dictionary) -> PackedStringArray:
 			effects.append("creates " + ", ".join(spawned))
 		if effects.is_empty():
 			continue
-		lines.append("%s -> %s" % [target, " and ".join(effects)])
+
+		# A reaction that is not certain reads very differently in play, so the
+		# odds belong on the line rather than buried in the material table.
+		var chance: float = float(inter.get("chance", 1.0))
+		var odds: String = "" if chance >= 1.0 else "  (%.0f%% a tick)" % (chance * 100.0)
+		lines.append("%s -> %s%s" % [target, " and ".join(effects), odds])
 
 	return lines
 
