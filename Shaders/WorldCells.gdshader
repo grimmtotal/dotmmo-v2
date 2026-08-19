@@ -21,8 +21,10 @@ uniform float outline_pixels = 1.0;
 
 // When true, an edge is only drawn where it faces something other than the same
 // material, so a connected same-type group is outlined as a single silhouette
-// instead of every particle in it being boxed individually.
-uniform bool group_outline = false;
+// instead of every particle in it being boxed individually. A particle with no
+// same-type neighbour still ends up fully boxed, since every side of it faces
+// something different.
+uniform bool group_outline = true;
 
 // Matches SimulationGlobal.FIRST_TYPE: ids below this are EMPTY and WALL.
 const int FIRST_TYPE = 2;
