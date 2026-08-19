@@ -137,8 +137,8 @@ var _count: int = 0
 func _ready() -> void:
 	_build_types()
 
-	_w = Global.WORLD_GRID_SIZE
-	_h = Global.WORLD_GRID_SIZE
+	_w = Global.WORLD_WIDTH
+	_h = Global.WORLD_HEIGHT
 	_pw = _w + 2
 	_ph = _h + 2
 	_cells = _pw * _ph

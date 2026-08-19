@@ -2,21 +2,29 @@ extends Node
 
 ## How many screen pixels wide one cell is drawn.
 ##
-## This is the single number to change to try a different particle size: the
-## grid resizes itself to keep the world the same size on screen, so 4 gives
-## smaller particles and more of them, 16 gives chunkier particles and fewer.
+## This is the single number to change to try a different particle size, and it
+## is also the cheapest performance lever there is: simulation cost scales with
+## the cell count and the cell count scales with the square of this, so every
+## doubling costs a quarter as much to simulate.
 ##
-## It is also the cheapest performance lever there is. Simulation cost scales
-## with the cell count and the cell count scales with the square of this, so
-## every doubling costs a quarter as much to simulate - 8 costs a sixteenth of
-## what 2 does. Nothing else in the engine buys a factor of four for one line.
+## At 64 a block is comfortably larger than the character, which is the point.
+## It buys a world hundreds of characters wide for the price of a small one,
+## and it makes a block something you stand on, shelter behind or get crushed
+## by rather than something you wade through.
+const WORLD_PIXEL_SCALE: int = 64
+
+## The world, in cells.
 ##
-## 16 puts a cell at the size of a tile in the games this one takes after, and
-## makes one particle - the unit the whole economy is denominated in - big
-## enough to see and count on screen.
-const WORLD_PIXEL_SCALE: int = 16
+## Wide and shallow, because this is a side-scroller: the axis you walk along is
+## the one worth spending cells on, and a world 125 blocks deep is already far
+## further than anyone digs. Cost tracks the two multiplied together, so trading
+## height for width is free.
+const WORLD_WIDTH: int = 500
+const WORLD_HEIGHT: int = 125
 
-## How big the world is on screen, in pixels. Cells divide into this.
-const WORLD_PIXELS: int = 2000
-
-const WORLD_GRID_SIZE: int = WORLD_PIXELS / WORLD_PIXEL_SCALE
+## The whole world in screen pixels. Far larger than any window - the camera
+## looks at a piece of it.
+const WORLD_PIXELS: Vector2i = Vector2i(
+	WORLD_WIDTH * WORLD_PIXEL_SCALE,
+	WORLD_HEIGHT * WORLD_PIXEL_SCALE
+)

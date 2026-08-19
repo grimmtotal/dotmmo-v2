@@ -61,10 +61,7 @@ func _setup_cursor() -> void:
 func _setup_camera() -> void:
 	_camera = Camera2D.new()
 	_camera.name = "DevCamera"
-	_camera.position = Vector2(
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE * 0.5,
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE * 0.5
-	)
+	_camera.position = Vector2(Global.WORLD_PIXELS) * 0.5
 	_camera.zoom = Vector2.ONE
 	_camera.enabled = true
 	add_child(_camera)
@@ -126,10 +123,7 @@ func _zoom_camera(factor: float) -> void:
 
 
 func _clamp_camera() -> void:
-	var world_size: Vector2 = Vector2(
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE,
-		Global.WORLD_GRID_SIZE * Global.WORLD_PIXEL_SCALE
-	)
+	var world_size: Vector2 = Vector2(Global.WORLD_PIXELS)
 	var visible_size: Vector2 = get_viewport_rect().size / _camera.zoom
 	var min_pos: Vector2 = visible_size * 0.5
 	var max_pos: Vector2 = world_size - visible_size * 0.5
