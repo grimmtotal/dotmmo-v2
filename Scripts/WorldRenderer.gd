@@ -3,12 +3,18 @@ extends Node2D
 ## Displays the simulation's cells as a single quad, coloured on the GPU.
 ##
 ## The sprite's texture is the simulation's raw type buffer (R8); a shader maps
-## type + variant to a palette colour and draws the black outline around each
-## connected same-type group by comparing a cell against its 8 neighbours. The
-## CPU side never touches colours at all: it just re-uploads the two byte
-## buffers when the simulation reports a change.
+## type + variant to a palette colour and paints the black outline inside each
+## cell's own block. The CPU side never touches colours at all: it just
+## re-uploads the two byte buffers when the simulation reports a change.
 
 const CELL_SHADER := preload("res://Shaders/WorldCells.gdshader")
+
+## Thickness of the outline drawn inside each cell, in screen pixels.
+@export var outline_pixels: int = 1
+
+## Outline whole connected groups of one material as a single silhouette
+## instead of boxing every particle individually.
+@export var group_outline: bool = false
 
 var _type_image: Image
 var _variant_image: Image
@@ -26,12 +32,15 @@ func _ready() -> void:
 	_type_texture = ImageTexture.create_from_image(_type_image)
 	_variant_texture = ImageTexture.create_from_image(_variant_image)
 
+	var scale: int = Global.WORLD_PIXEL_SCALE
+
 	var material := ShaderMaterial.new()
 	material.shader = CELL_SHADER
 	material.set_shader_parameter("variant_tex", _variant_texture)
 	material.set_shader_parameter("palette_tex", ImageTexture.create_from_image(SimulationGlobal.buildPaletteImage()))
-
-	var scale: int = Global.WORLD_PIXEL_SCALE
+	material.set_shader_parameter("cell_pixels", float(scale))
+	material.set_shader_parameter("outline_pixels", float(outline_pixels))
+	material.set_shader_parameter("group_outline", group_outline)
 
 	_sprite = Sprite2D.new()
 	_sprite.texture = _type_texture
