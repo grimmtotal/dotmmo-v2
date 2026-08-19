@@ -241,7 +241,7 @@ const TYPES = {
 		},
 		"timers": {
 			"Bubble": {
-				"every": Vector2i(1500, 4000),
+				"every": Vector2i(1500, 40000),
 				"spawn": ["Fire"]
 			}
 		}
