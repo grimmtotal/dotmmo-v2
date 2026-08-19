@@ -44,6 +44,17 @@ const MAX_TICKS_PER_FRAME: int = 2
 # guard against a typo running away with a counter, not a design limit.
 const MAX_TIMER: int = 60 * 60 * 60  # one hour at 60Hz
 
+# Cells per chunk edge. Chunks are the unit the renderer redraws in: a step that
+# disturbs one corner of the world uploads that corner, not the whole buffer.
+#
+# A power of two so a cell's chunk comes out of a shift rather than a division -
+# this is worked out inline at every cell write, which is the hottest path there
+# is. 32 keeps a chunk's pixels (1KB per buffer) comfortably inside a cache line
+# run while staying coarse enough that a busy world dirties tens of chunks, not
+# thousands.
+const CHUNK_SHIFT: int = 5
+const CHUNK: int = 1 << CHUNK_SHIFT
+
 signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
@@ -61,8 +72,17 @@ var _queued: PackedByteArray
 
 # The renderer reads `_type` and `_variant` directly (uploaded as textures and
 # coloured on the GPU), so the simulation does no pixel work at all - it only
-# raises this flag when any cell changed.
-var _cells_dirty: bool = true
+# records which chunks changed.
+#
+# `_chunk_dirty` is the per-chunk dedupe flag and `_dirty_chunks` the list to
+# hand out, exactly the arrangement the active list uses for cells. The list can
+# never outgrow the chunk count, since a chunk is only added while its flag is
+# clear, so it is sized once and never resized.
+var _chunk_dirty: PackedByteArray
+var _dirty_chunks: PackedInt32Array
+var _dirty_n: int = 0
+var _chunks_x: int
+var _chunks_y: int
 
 # --- Type tables, indexed by type id ---
 var _t_name: PackedStringArray = PackedStringArray()
@@ -118,6 +138,13 @@ func _ready() -> void:
 	_pw = _w + 2
 	_ph = _h + 2
 	_cells = _pw * _ph
+
+	# The last chunk in a row or column is short when the world is not a whole
+	# number of chunks across; `chunkRect` reports each chunk's real extent.
+	_chunks_x = (_w + CHUNK - 1) >> CHUNK_SHIFT
+	_chunks_y = (_h + CHUNK - 1) >> CHUNK_SHIFT
+	_chunk_dirty.resize(_chunks_x * _chunks_y)
+	_dirty_chunks.resize(_chunks_x * _chunks_y)
 
 	_active.resize(8192)
 	clearAll()
@@ -309,7 +336,11 @@ func clearAll() -> void:
 
 	_active_n = 0
 	_count = 0
-	_cells_dirty = true
+	_dirty_n = 0
+	for chunk: int in _chunk_dirty.size():
+		_chunk_dirty[chunk] = 1
+		_dirty_chunks[chunk] = chunk
+	_dirty_n = _chunk_dirty.size()
 	world_cleared.emit()
 
 
@@ -373,18 +404,40 @@ func getParticle(pos: Vector2) -> Dictionary:
 	}
 
 
-func getTypeCells() -> PackedByteArray:
-	return _type
+## Chunks whose cells changed since the last call, then clears the record. The
+## renderer redraws exactly these and leaves the rest of the world alone.
+func consumeDirtyChunks() -> PackedInt32Array:
+	var changed: PackedInt32Array = _dirty_chunks.slice(0, _dirty_n)
+	for k: int in _dirty_n:
+		_chunk_dirty[_dirty_chunks[k]] = 0
+	_dirty_n = 0
+	return changed
 
 
-func getVariantCells() -> PackedByteArray:
-	return _variant
+func getChunkGrid() -> Vector2i:
+	return Vector2i(_chunks_x, _chunks_y)
 
 
-func consumeCellsDirty() -> bool:
-	var was_dirty: bool = _cells_dirty
-	_cells_dirty = false
-	return was_dirty
+## Where a chunk sits in the world and how big it really is. Chunks along the
+## right and bottom edges are short when the world is not a whole number of
+## chunks across.
+func chunkRect(chunk: int) -> Rect2i:
+	var x: int = (chunk % _chunks_x) << CHUNK_SHIFT
+	var y: int = (chunk / _chunks_x) << CHUNK_SHIFT
+	return Rect2i(x, y, mini(CHUNK, _w - x), mini(CHUNK, _h - y))
+
+
+## One chunk's cells, unpadded and packed row by row, ready to hand to an Image.
+## Only the rows the chunk covers are touched, so the cost tracks the area that
+## actually changed rather than the size of the world.
+func chunkCells(chunk: int, variants: bool) -> PackedByteArray:
+	var rect: Rect2i = chunkRect(chunk)
+	var source: PackedByteArray = _variant if variants else _type
+	var out: PackedByteArray = PackedByteArray()
+	for row: int in rect.size.y:
+		var from: int = (rect.position.y + row + 1) * _pw + rect.position.x + 1
+		out.append_array(source.slice(from, from + rect.size.x))
+	return out
 
 
 ## Palette lookup texture for the cell shader: x = colour variant, y = type id.
@@ -409,10 +462,6 @@ func buildPaletteImage() -> Image:
 				(packed >> 24) & 0xFF))
 
 	return image
-
-
-func getPaddedSize() -> Vector2i:
-	return Vector2i(_pw, _ph)
 
 
 func getActiveCount() -> int:
@@ -685,7 +734,14 @@ func _place(i: int, id: int) -> void:
 	_timer[i] = _roll(_t_every_min[id], _t_every_max[id])
 	_flow[i] = randi() & 1
 	_clock[i] = _tick
-	_cells_dirty = true
+
+	var row_place: int = i / _pw
+	var chunk_place: int = ((row_place - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((i - row_place * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_place] == 0:
+		_chunk_dirty[chunk_place] = 1
+		_dirty_chunks[_dirty_n] = chunk_place
+		_dirty_n += 1
 
 	_count += 1
 	_activate_if_exposed(i)
@@ -723,7 +779,14 @@ func _erase(i: int) -> void:
 	_type[i] = EMPTY
 	_life[i] = 0
 	_timer[i] = 0
-	_cells_dirty = true
+
+	var row_erase: int = i / _pw
+	var chunk_erase: int = ((row_erase - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((i - row_erase * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_erase] == 0:
+		_chunk_dirty[chunk_erase] = 1
+		_dirty_chunks[_dirty_n] = chunk_erase
+		_dirty_n += 1
 
 	_count -= 1
 
@@ -739,7 +802,21 @@ func _relocate(from: int, to: int) -> void:
 	_type[from] = EMPTY
 	_life[from] = 0
 	_timer[from] = 0
-	_cells_dirty = true
+
+	var row_src: int = from / _pw
+	var chunk_src: int = ((row_src - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((from - row_src * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_src] == 0:
+		_chunk_dirty[chunk_src] = 1
+		_dirty_chunks[_dirty_n] = chunk_src
+		_dirty_n += 1
+	var row_dst: int = to / _pw
+	var chunk_dst: int = ((row_dst - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((to - row_dst * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_dst] == 0:
+		_chunk_dirty[chunk_dst] = 1
+		_dirty_chunks[_dirty_n] = chunk_dst
+		_dirty_n += 1
 
 	_activate_if_exposed(to)
 	_wake_reactors(to)
@@ -767,7 +844,21 @@ func _swap(a: int, b: int) -> void:
 
 	_clock[a] = _tick
 	_clock[b] = _tick
-	_cells_dirty = true
+
+	var row_a: int = a / _pw
+	var chunk_a: int = ((row_a - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((a - row_a * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_a] == 0:
+		_chunk_dirty[chunk_a] = 1
+		_dirty_chunks[_dirty_n] = chunk_a
+		_dirty_n += 1
+	var row_b: int = b / _pw
+	var chunk_b: int = ((row_b - 1) >> CHUNK_SHIFT) * _chunks_x \
+			+ ((b - row_b * _pw - 1) >> CHUNK_SHIFT)
+	if _chunk_dirty[chunk_b] == 0:
+		_chunk_dirty[chunk_b] = 1
+		_dirty_chunks[_dirty_n] = chunk_b
+		_dirty_n += 1
 
 	_activate_if_exposed(a)
 	_activate_if_exposed(b)
