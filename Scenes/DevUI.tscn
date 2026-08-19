@@ -1,6 +1,17 @@
-[gd_scene load_steps=2 format=3 uid="uid://c1l8qxp8d6s4x"]
+[gd_scene load_steps=3 format=3 uid="uid://c1l8qxp8d6s4x"]
 
 [ext_resource type="Script" path="res://Scripts/DevUI.gd" id="1_xxxxx"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.12, 0.12, 0.14, 0.88)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+content_margin_left = 8.0
+content_margin_top = 8.0
+content_margin_right = 8.0
+content_margin_bottom = 8.0
 
 [node name="DevUI" type="CanvasLayer"]
 script = ExtResource("1_xxxxx")
@@ -11,6 +22,7 @@ offset_top = 10.0
 offset_right = 10.0
 offset_bottom = 10.0
 mouse_filter = 1
+theme_override_constants/separation = 8
 unique_name_in_owner = true
 
 [node name="ParticlePicker" type="PanelContainer" parent="."]
@@ -19,10 +31,12 @@ offset_top = 50.0
 offset_right = 230.0
 offset_bottom = 450.0
 mouse_filter = 1
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 unique_name_in_owner = true
 
 [node name="VBoxContainer" type="VBoxContainer" parent="ParticlePicker"]
 layout_mode = 2
+theme_override_constants/separation = 6
 
 [node name="Title" type="Label" parent="ParticlePicker/VBoxContainer"]
 layout_mode = 2
@@ -37,6 +51,7 @@ custom_minimum_size = Vector2(200, 340)
 [node name="ParticleList" type="VBoxContainer" parent="ParticlePicker/VBoxContainer/ScrollContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
+theme_override_constants/separation = 4
 unique_name_in_owner = true
 
 [node name="InfoPanel" type="PanelContainer" parent="."]
@@ -45,6 +60,7 @@ offset_top = 460.0
 offset_right = 230.0
 offset_bottom = 640.0
 mouse_filter = 1
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 unique_name_in_owner = true
 
 [node name="MarginContainer" type="MarginContainer" parent="InfoPanel"]

@@ -16,6 +16,7 @@ func _ready() -> void:
 	_sprite.texture = _texture
 	_sprite.centered = false
 	_sprite.scale = Vector2(Global.WORLD_PIXEL_SCALE, Global.WORLD_PIXEL_SCALE)
+	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(_sprite)
 
 
