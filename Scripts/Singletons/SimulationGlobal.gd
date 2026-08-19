@@ -426,6 +426,37 @@ func _step() -> void:
 	# Alternating the diagonal preference each tick stops piles from leaning.
 	var flip: bool = (tick & 1) == 1
 
+	# Sorted flat indices walked backwards also fix the horizontal scan to
+	# right-to-left, and that direction leaks into how liquids spread. When the
+	# rightmost cell of a run steps right it frees its cell, the cell to its
+	# left is looked at next and takes that gap, and so on: a whole run shifts
+	# right within one tick. Leftward spread gets no such chain, because a cell
+	# moving left lands where the scan has not reached yet and is then held by
+	# the tick guard. The result is a pronounced rightward drift (a dropped
+	# blob of water leads its start point by ~75 cells after 200 ticks).
+	#
+	# Reversing each row's run on alternate ticks makes the scan cross that row
+	# left-to-right instead, so the chain runs the other way and the two cancel.
+	# Rows stay in bottom-up order, which is what falling depends on. Row runs
+	# are contiguous here, so this costs one division per row and a swap per
+	# cell, rather than anything per-cell in the step body itself.
+	if flip:
+		var start: int = 0
+		while start < count:
+			var row_end: int = (pending[start] / pw) * pw + pw
+			var last: int = start
+			while last + 1 < count and pending[last + 1] < row_end:
+				last += 1
+			var a: int = start
+			var b: int = last
+			while a < b:
+				var swap_tmp: int = pending[a]
+				pending[a] = pending[b]
+				pending[b] = swap_tmp
+				a += 1
+				b -= 1
+			start = last + 1
+
 	for k: int in range(count - 1, -1, -1):
 		var i: int = pending[k]
 		var t: int = _type[i]
