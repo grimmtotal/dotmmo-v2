@@ -47,4 +47,4 @@ Particles of the same type that are touching (including diagonally) are treated 
 
 Because this only depends on each cell's immediate neighbors, it falls out correctly if a group splits apart: each resulting piece gets its own outline around its own shape, with no extra bookkeeping needed.
 
-This is implemented in `Scripts/Singletons/SimulationGlobal.gd` (`_repaint_cell` / `_repaint_neighbourhood`), which repaints a changed cell and its 8 neighbors any time a particle is placed, erased, moved, or swapped.
+Both the palette coloring and the outline are computed entirely on the GPU (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader does the palette lookup plus the 8-neighbor boundary test per cell. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
