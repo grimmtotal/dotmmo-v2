@@ -16,7 +16,9 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+Global="*uid://dh1f61e0bk4ib"
 SimulationGlobal="*uid://btxcw204osbcg"
+Particles="*uid://b4ymffy2bjgmb"
 
 [display]
 
