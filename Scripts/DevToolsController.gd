@@ -15,6 +15,12 @@ signal particle_selected(data: Dictionary, grid_pos: Vector2)
 signal dev_mode_changed(enabled: bool)
 signal brush_radius_changed(radius: int)
 
+## Cursor colours for the tools that are not about a material. Paint takes the
+## selected material's own colour instead, so the cursor always says what a
+## click will do without anyone reading the toolbar.
+const ERASE_COLOR: Color = Color(1.0, 0.36, 0.36)
+const SELECT_COLOR: Color = Color(0.55, 0.9, 1.0)
+
 const MIN_ZOOM: float = 0.2
 const MAX_ZOOM: float = 4.0
 const ZOOM_FACTOR: float = 1.1
@@ -56,6 +62,28 @@ func _setup_cursor() -> void:
 	_cursor.radius = brush_radius
 	_cursor.z_index = 100
 	add_child(_cursor)
+	_refresh_cursor_color()
+
+
+func _refresh_cursor_color() -> void:
+	if _cursor == null:
+		return
+	match _current_tool:
+		Tool.ERASE:
+			_cursor.color = ERASE_COLOR
+		Tool.SELECT:
+			_cursor.color = SELECT_COLOR
+		_:
+			_cursor.color = _material_color(selected_particle)
+
+
+## The first colour a material is drawn with, brightened so the cursor reads as
+## an overlay rather than a stray particle of that material.
+func _material_color(type_name: String) -> Color:
+	var colours: Array = Particles.get_config(type_name).get("colors", [])
+	if colours.is_empty():
+		return Color.WHITE
+	return Color(colours[0] as String).lightened(0.35)
 
 
 func _setup_camera() -> void:
@@ -133,6 +161,7 @@ func _clamp_camera() -> void:
 
 func set_tool(tool: Tool) -> void:
 	_current_tool = tool
+	_refresh_cursor_color()
 	tool_changed.emit(tool)
 
 
@@ -145,6 +174,7 @@ func set_selected_particle(type_name: String) -> void:
 		push_warning("Unknown particle type selected: ", type_name)
 		return
 	selected_particle = type_name
+	_refresh_cursor_color()
 	selected_particle_changed.emit(type_name)
 
 

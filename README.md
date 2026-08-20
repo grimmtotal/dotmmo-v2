@@ -2,65 +2,91 @@
 
 A flat-array falling-sand simulation built in Godot 4.7.
 
-## Particle color palette
+## How particles are drawn
 
-Every particle color comes from this fixed 16-color palette (`Scripts/Singletons/Particles.gd`). Nothing outside this list is used for particle colors.
+Rendering is entirely GPU-side (`Shaders/WorldCells.gdshader`). The simulation's
+raw type and variant buffers are uploaded as R8 textures and the fragment shader
+turns them into colour; the CPU simulation does no colour work at all, it just
+flips a dirty flag when cells change, keeping the hot loop free of rendering
+cost.
 
-| Swatch | Hex | Name |
-|---|---|---|
-| ![#fbffce](https://placehold.co/16x16/fbffce/fbffce.png) | `#fbffce` | Pale Yellow |
-| ![#b4dc25](https://placehold.co/16x16/b4dc25/b4dc25.png) | `#b4dc25` | Lime Green |
-| ![#26a630](https://placehold.co/16x16/26a630/26a630.png) | `#26a630` | Green |
-| ![#5af0f7](https://placehold.co/16x16/5af0f7/5af0f7.png) | `#5af0f7` | Light Cyan |
-| ![#fbd439](https://placehold.co/16x16/fbd439/fbd439.png) | `#fbd439` | Golden Yellow |
-| ![#ff9cc9](https://placehold.co/16x16/ff9cc9/ff9cc9.png) | `#ff9cc9` | Pink |
-| ![#25e2c0](https://placehold.co/16x16/25e2c0/25e2c0.png) | `#25e2c0` | Turquoise |
-| ![#08a0c0](https://placehold.co/16x16/08a0c0/08a0c0.png) | `#08a0c0` | Cyan Blue |
-| ![#f09432](https://placehold.co/16x16/f09432/f09432.png) | `#f09432` | Orange |
-| ![#f43666](https://placehold.co/16x16/f43666/f43666.png) | `#f43666` | Crimson Pink |
-| ![#c635bc](https://placehold.co/16x16/c635bc/c635bc.png) | `#c635bc` | Magenta |
-| ![#165a7d](https://placehold.co/16x16/165a7d/165a7d.png) | `#165a7d` | Dark Blue |
-| ![#dc532d](https://placehold.co/16x16/dc532d/dc532d.png) | `#dc532d` | Burnt Orange |
-| ![#a12536](https://placehold.co/16x16/a12536/a12536.png) | `#a12536` | Dark Red |
-| ![#6f288b](https://placehold.co/16x16/6f288b/6f288b.png) | `#6f288b` | Purple |
-| ![#260e3e](https://placehold.co/16x16/260e3e/260e3e.png) | `#260e3e` | Deep Violet |
+### Colours
 
-### Particle color assignments
+Each material lists one to three colours in `Scripts/Singletons/Particles.gd`,
+and every particle picks one when it is created. Two colours far enough apart to
+tell from each other is what stops a mass of one material reading as a single
+poured fill.
 
-Each particle type uses at most two colors from the palette — one where the material reads as uniform, two where a little grain-to-grain variation helps it feel like a substance rather than a flat fill:
-
-| Particle | Colors |
+| Particle | Colours |
 |---|---|
-| Sand | `#fbd439` Golden Yellow |
-| Water | `#5af0f7` Light Cyan, `#08a0c0` Cyan Blue |
-| Stone | `#165a7d` Dark Blue, `#260e3e` Deep Violet |
-| Plant | `#b4dc25` Lime Green, `#26a630` Green |
-| Fire | `#f09432` Orange, `#dc532d` Burnt Orange |
-| Lava | `#f43666` Crimson Pink, `#a12536` Dark Red |
-| Smoke | `#6f288b` Purple |
-| Steam | `#fbffce` Pale Yellow |
-| Ash | `#260e3e` Deep Violet |
+| Sand | `#e8c46a` Pale Sand, `#c99a45` Deep Sand |
+| Water | `#2f86e0` Surface Blue, `#1c5da8` Deep Blue |
+| Stone | `#6b7480` Slate, `#565f6b` Dark Slate |
+| Plant | `#46b055` Leaf, `#2b7c38` Deep Leaf |
+| Fire | `#ffd34d` Yellow Core, `#ff8a1f` Orange, `#f2451f` Red Edge |
+| Lava | `#ff9a2b` Molten, `#c22a10` Crust |
+| Ember | `#ff7a1a` Hot Cinder, `#a83208` Dull Cinder |
+| Smoke | `#585a66` Ash Grey, `#464855` Dark Grey |
+| Steam | `#e6f0f4` Off-White, `#c3d3dc` Pale Blue |
+| Ash | `#3a3a40` Charcoal, `#2c2c31` Soot |
 
-The palette has no true neutrals, so the dark materials borrow from the blues and violets: Stone and Ash share Deep Violet, which reads fine in practice since Stone is static terrain and Ash falls and despawns.
+### Look parameters
 
-## Cell size and particle outlines
+Colour alone leaves every cell a flat square, which is most of what makes a
+falling-sand world look like a readout instead of a place. So each material also
+carries a `look` block, uploaded once at startup as a lookup row per type and
+applied per fragment:
 
-Particles of the same type that are touching (including diagonally) are treated as one group, and the black outline traces the outside of the whole group rather than boxing each particle in it. Because cells are drawn as 8×8 blocks, the outline fits *inside* a cell: a 1px black border on the sides that face something else, with the material color still filling the middle. A particle with no same-type neighbor ends up fully outlined on its own — every side of it faces something different — which is what a lone grain should look like.
+| Field | What it does |
+|---|---|
+| `grain` | How far a particle's shade strays from its material's colour |
+| `glow` | Brightness that moves over time - flame flicker high, a surface glint low |
+| `bevel` | Face shading across the cell: lit on top, dark underneath and at the sides |
+| `alpha` | Opacity |
 
-Since it only depends on each cell's immediate neighbors, this falls out correctly when a group splits apart: each piece immediately outlines its own new shape, with no extra bookkeeping.
+The split between them is what separates the three states of matter by feel
+rather than only by colour. Solids take a strong `bevel`, so a wall of stone
+reads as blocks you could stand on. Liquids and gases leave it near zero and run
+together into one continuous body, and lean on `alpha` instead, so a plume of
+smoke shows the sky through it. Fire, lava and embers carry the `glow`.
 
-The rendering is entirely GPU-side (`Shaders/WorldCells.gdshader`): the simulation's raw type and variant buffers are uploaded as R8 textures, and the fragment shader figures out from each screen pixel's position within its cell which edges it sits against, then tests only those directions against the neighboring cells. The CPU simulation does no color or outline work at all — it just flips a dirty flag when cells change, keeping the hot loop free of rendering costs.
+Every one of these is a per-fragment effect that reads nothing from the
+neighbouring cells. That is deliberate: the world is uploaded in chunks, each
+drawn from its own pair of textures, so anything that sampled across a chunk
+edge would show a seam there.
 
-### Tuning it
+### The render seed
 
-Everything visual lives in `Scripts/Singletons/Global.gd`:
+`grain` and `glow` need a per-particle random number, and it has to be the
+*same* number every frame - a shade recomputed from the cell position would make
+a falling grain flicker through every shade on the way down.
+
+So the variant byte carries both: the low three bits are the colour index and
+the remaining five are a render seed, rolled once when the particle is created.
+Both already travel with the particle when it moves, since the whole byte is
+copied on every relocate and swap, so the seed rides along for free and a grain
+keeps the shade it was born with. Three bits caps a material at eight colours,
+five more than the most colourful one uses.
+
+### The backdrop
+
+Empty cells are transparent, so the world hangs in front of a gradient drawn
+behind it (`WorldRenderer._add_backdrop`), running from open sky at the top to
+near-black at the bottom of the world. Depth then reads for free: how dark it is
+around you is how deep you have dug.
+
+## Cell size
+
+Cells are drawn as `WORLD_PIXEL_SCALE`-pixel blocks. Everything sizing the world
+lives in `Scripts/Singletons/Global.gd`:
 
 | Constant | Meaning |
 |---|---|
-| `WORLD_PIXEL_SCALE` | Screen pixels per cell — the one number to change to try a different particle size |
-| `WORLD_PIXELS` | How big the world is on screen; `WORLD_GRID_SIZE` is derived from it |
+| `WORLD_PIXEL_SCALE` | Screen pixels per cell - the one number to change to try a different particle size |
+| `WORLD_WIDTH`, `WORLD_HEIGHT` | The world in cells; `WORLD_PIXELS` is derived from them |
 
-`WORLD_GRID_SIZE` is derived (`WORLD_PIXELS / WORLD_PIXEL_SCALE`), so changing the scale alone keeps the world the same size on screen and adjusts the cell count to match. Simulation cost scales with cell count, so it drops fast as the scale goes up: at 8px the world is 250×250 cells, a sixteenth of the cost of the same world at 2px.
+Simulation cost tracks the cell count, so it drops fast as the scale goes up: a
+world drawn at 64px per cell costs a sixteenth of the same world at 16px.
 
 ## Performance: skipping fully-surrounded particles
 

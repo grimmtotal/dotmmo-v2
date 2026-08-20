@@ -34,4 +34,7 @@ window/stretch/aspect="expand"
 
 [rendering]
 
+; Matches the top of the world backdrop, so the area outside the world reads as
+; more sky rather than as engine grey.
+environment/defaults/default_clear_color=Color(0.247, 0.431, 0.659, 1)
 rendering_device/driver.windows="d3d12"

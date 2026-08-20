@@ -3,6 +3,25 @@ extends Node
 const DEFAULTS = {
 	"initialGravity": Vector2(0, 0),
 	"colors": ["#754b25ff"],
+	# How the renderer paints this material, past its colour. Every field is
+	# consumed by Shaders/WorldCells.gdshader, uploaded once at startup as a
+	# lookup row per type, so none of it costs the simulation anything.
+	"look": {
+		# Per-particle brightness variation, so a mass of one material has
+		# grain instead of reading as a single flat plane. Rolled once when a
+		# particle is created and carried with it as it moves, so a falling
+		# grain keeps its own shade rather than twinkling on the way down.
+		"grain": 0.08,
+		# Brightness that moves over time. High values flicker like flame; low
+		# ones read as a glint crawling over a surface.
+		"glow": 0.0,
+		# Face shading across the cell - lit along the top, dark underneath.
+		# This is what makes a solid read as a block you could stand on, so
+		# liquids and gases leave it near zero and stay continuous instead.
+		"bevel": 0.0,
+		# Opacity. Gases sit well below 1 so a plume shows the sky through it.
+		"alpha": 1.0
+	},
 	"solid": false,
 	"liquid": false,
 	"density": 1.0,
@@ -89,7 +108,8 @@ static func _merge_with_defaults(specific: Dictionary, defaults: Dictionary) -> 
 const TYPES = {
 	"Sand": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#f4c430"], # Saffron
+		"colors": ["#e8c46a", "#c99a45"], # Pale Sand, Deep Sand
+		"look": {"grain": 0.10, "bevel": 0.30},
 		"solid": true,
 		"density": 1.5,
 		"interactions": {
@@ -111,7 +131,8 @@ const TYPES = {
 	},
 	"Water": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#2e86de", "#2a7fd6"], # Bright Blue, Near-Identical Blue
+		"colors": ["#2f86e0", "#1c5da8"], # Surface Blue, Deep Blue
+		"look": {"grain": 0.05, "glow": 0.10, "bevel": 0.05, "alpha": 0.86},
 		"liquid": true,
 		"density": 1.0,
 		"interactions": {
@@ -138,7 +159,8 @@ const TYPES = {
 	},
 	"Stone": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#7f8c8d"], # Steel Grey
+		"colors": ["#6b7480", "#565f6b"], # Slate, Dark Slate
+		"look": {"grain": 0.08, "bevel": 0.42},
 		"solid": true,
 		"density": 2.0,
 		"interactions": {
@@ -156,7 +178,8 @@ const TYPES = {
 	"Fire": {
 		"initialGravity": Vector2(0, -1),
 		"spread": Vector2(2,2),
-		"colors": ["#ff3b30", "#ff9500", "#ffcc00"], # Red-Orange, Orange, Yellow
+		"colors": ["#ffd34d", "#ff8a1f", "#f2451f"], # Yellow Core, Orange, Red Edge
+		"look": {"grain": 0.10, "glow": 0.85, "alpha": 0.95},
 		"density": 0.3,
 		"interactions": {
 			"Plant": {
@@ -185,7 +208,8 @@ const TYPES = {
 	},
 	"Smoke": {
 		"initialGravity": Vector2(0, -0.5),
-		"colors": ["#95a5a6", "#7f8c8d"], # Light Grey, Grey
+		"colors": ["#585a66", "#464855"], # Ash Grey, Dark Grey
+		"look": {"grain": 0.16, "alpha": 0.50},
 		"density": 0.1,
 		"interactions": {},
 		"idleBehaviors": {
@@ -201,7 +225,8 @@ const TYPES = {
 	},
 	"Steam": {
 		"initialGravity": Vector2(0, -1.5),
-		"colors": ["#ecf0f1", "#d5dbdb"], # Off-White, Light Grey
+		"colors": ["#e6f0f4", "#c3d3dc"], # Off-White, Pale Blue
+		"look": {"grain": 0.14, "glow": 0.06, "alpha": 0.42},
 		"density": 0.05,
 		"interactions": {},
 		"idleBehaviors": {
@@ -217,7 +242,8 @@ const TYPES = {
 	},
 	"Plant": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#27ae60", "#25a25b"], # Emerald, Near-Identical Green
+		"colors": ["#46b055", "#2b7c38"], # Leaf, Deep Leaf
+		"look": {"grain": 0.13, "bevel": 0.22},
 		"solid": true,
 		"density": 0.8,
 		"interactions": {
@@ -245,7 +271,8 @@ const TYPES = {
 	},
 	"Ash": {
 		"initialGravity": Vector2(0, 0.3),
-		"colors": ["#424949"], # Charcoal
+		"colors": ["#3a3a40", "#2c2c31"], # Charcoal, Soot
+		"look": {"grain": 0.15, "bevel": 0.10, "alpha": 0.92},
 		"density": 0.5,
 		"interactions": {},
 		"idleBehaviors": {
@@ -261,7 +288,8 @@ const TYPES = {
 	},
 	"Ember": {
 		"initialGravity": Vector2(0, 0),
-		"colors": ["#ff6b1a", "#c1440e"], # Hot Cinder, Dull Cinder
+		"colors": ["#ff7a1a", "#a83208"], # Hot Cinder, Dull Cinder
+		"look": {"grain": 0.10, "glow": 0.60, "bevel": 0.24},
 		"solid": true,
 		"density": 0.8,
 		"interactions": {
@@ -292,7 +320,8 @@ const TYPES = {
 	},
 	"Lava": {
 		"initialGravity": Vector2(0, 1),
-		"colors": ["#e63946", "#df323f"], # Red, Near-Identical Red
+		"colors": ["#ff9a2b", "#c22a10"], # Molten, Crust
+		"look": {"grain": 0.07, "glow": 0.55, "bevel": 0.06},
 		"liquid": true,
 		"density": 2.5,
 		"interactions": {},

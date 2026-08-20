@@ -16,6 +16,25 @@ extends Node2D
 
 const CELL_SHADER := preload("res://Shaders/WorldCells.gdshader")
 
+## The sky the world hangs in. Empty cells are transparent, so without this the
+## void behind the particles is whatever the engine happens to clear to - and a
+## flat grey field is most of what makes a falling-sand world look like a
+## readout rather than a place. The gradient runs from open sky at the top to
+## near-black at the bottom of the world, which also gives depth a free read:
+## how dark it is around you is how deep you have dug.
+const SKY: Array[Color] = [
+	Color("#3f6ea8"), # Open sky
+	Color("#24406b"), # Horizon
+	Color("#101a2c"), # Shallow ground
+	Color("#070a12"), # Deep ground
+]
+const SKY_STOPS: Array[float] = [0.0, 0.16, 0.34, 1.0]
+
+## Resolution of the backdrop texture. It is stretched over the whole world and
+## sampled with linear filtering, so a couple of hundred rows is plenty for a
+## gradient that only varies vertically.
+const SKY_ROWS: int = 256
+
 var _sprites: Array[Sprite2D] = []
 var _type_images: Array[Image] = []
 var _variant_images: Array[Image] = []
@@ -24,6 +43,9 @@ var _variant_textures: Array[ImageTexture] = []
 
 
 func _ready() -> void:
+	_add_backdrop()
+
+	var style := ImageTexture.create_from_image(SimulationGlobal.buildStyleImage())
 	var palette := ImageTexture.create_from_image(SimulationGlobal.buildPaletteImage())
 	var grid: Vector2i = SimulationGlobal.getChunkGrid()
 	var scale: int = Global.WORLD_PIXEL_SCALE
@@ -47,6 +69,7 @@ func _ready() -> void:
 		material.shader = CELL_SHADER
 		material.set_shader_parameter("variant_tex", variant_texture)
 		material.set_shader_parameter("palette_tex", palette)
+		material.set_shader_parameter("style_tex", style)
 
 		var sprite := Sprite2D.new()
 		sprite.texture = type_texture
@@ -62,6 +85,28 @@ func _ready() -> void:
 		_variant_images.append(variant_image)
 		_type_textures.append(type_texture)
 		_variant_textures.append(variant_texture)
+
+
+func _add_backdrop() -> void:
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array(SKY_STOPS)
+	gradient.colors = PackedColorArray(SKY)
+
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.width = 1
+	texture.height = SKY_ROWS
+	texture.fill_from = Vector2(0, 0)
+	texture.fill_to = Vector2(0, 1)
+
+	var sprite := Sprite2D.new()
+	sprite.name = "Backdrop"
+	sprite.texture = texture
+	sprite.centered = false
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	sprite.scale = Vector2(Global.WORLD_PIXELS) / Vector2(1, SKY_ROWS)
+	sprite.z_index = -10
+	add_child(sprite)
 
 
 func _process(_delta: float) -> void:
