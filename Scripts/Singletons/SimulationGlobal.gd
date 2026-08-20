@@ -20,6 +20,13 @@ const EMPTY: int = 0
 const WALL: int = 1
 const FIRST_TYPE: int = 2
 
+## How much of the variant byte the colour index gets. The rest is the render
+## seed. Three bits caps a material at 8 colours, which is five more than the
+## most colourful one uses.
+const VARIANT_BITS: int = 3
+const VARIANT_MASK: int = (1 << VARIANT_BITS) - 1
+const SEED_RANGE: int = 1 << (8 - VARIANT_BITS)
+
 # Movement classes.
 const MOVE_STATIC: int = 0
 const MOVE_FALL: int = 1
@@ -63,6 +70,11 @@ signal world_cleared
 
 # --- Cell state (padded, parallel arrays) ---
 var _type: PackedByteArray
+# Colour variant in the low VARIANT_BITS, a per-particle render seed above it.
+# Both travel with the particle when it moves, which is the whole point of
+# keeping the seed here rather than deriving it from the cell position: a
+# falling grain keeps the shade it was born with instead of flickering through
+# every shade on the way down.
 var _variant: PackedByteArray
 var _life: PackedInt32Array
 var _timer: PackedInt32Array
@@ -97,6 +109,9 @@ var _t_liquid: PackedByteArray
 var _t_reactive: PackedByteArray
 var _t_density: PackedFloat32Array
 var _t_variants: PackedByteArray
+# Four bytes per type - grain, glow, bevel, alpha - handed to the shader as a
+# lookup row. See the "look" block in Particles.gd for what each one does.
+var _t_look: PackedByteArray
 var _t_colour_base: PackedInt32Array
 var _t_colours: PackedInt64Array
 var _t_spread_x: PackedInt32Array
@@ -171,6 +186,7 @@ func _build_types() -> void:
 	_t_every_min.resize(total)
 	_t_every_max.resize(total)
 	_t_variants.resize(total)
+	_t_look.resize(total * 4)
 	_t_colour_base.resize(total)
 	_t_spread_x.resize(total)
 	_t_spread_y.resize(total)
@@ -225,7 +241,17 @@ func _configure_type(id: int, config: Dictionary) -> void:
 	else:
 		_t_move[id] = MOVE_STATIC
 
+	var look: Dictionary = config.get("look", {})
+	_t_look[id * 4] = _to_byte(look.get("grain", 0.0))
+	_t_look[id * 4 + 1] = _to_byte(look.get("glow", 0.0))
+	_t_look[id * 4 + 2] = _to_byte(look.get("bevel", 0.0))
+	_t_look[id * 4 + 3] = _to_byte(look.get("alpha", 1.0))
+
 	var colours: Array = config.get("colors", [])
+	if colours.size() > VARIANT_MASK + 1:
+		push_warning("Too many colours for ", _t_name[id], "; only the first ",
+				VARIANT_MASK + 1, " fit the variant byte.")
+		colours = colours.slice(0, VARIANT_MASK + 1)
 	_t_colour_base[id] = _t_colours.size()
 	_t_variants[id] = maxi(colours.size(), 1)
 	if colours.is_empty():
@@ -309,6 +335,10 @@ func _configure_reactions(id: int, config: Dictionary) -> void:
 		_react_mask[key] = 1
 		_react[key] = {"destroy": destroy, "spawn": spawn, "reset": reset, "chance": chance}
 		_t_reactive[id] = 1
+
+
+func _to_byte(value: float) -> int:
+	return int(round(clampf(value, 0.0, 1.0) * 255.0))
 
 
 ## Packs to little-endian RGBA8, matching Image.FORMAT_RGBA8 byte order.
@@ -470,6 +500,24 @@ func buildPaletteImage() -> Image:
 				(packed >> 8) & 0xFF,
 				(packed >> 16) & 0xFF,
 				(packed >> 24) & 0xFF))
+
+	return image
+
+
+## Look-parameter lookup texture for the cell shader: one texel per type id,
+## carrying that material's grain, glow, bevel and alpha. Built once at startup.
+func buildStyleImage() -> Image:
+	var image: Image = Image.create(1, _t_variants.size(), false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+
+	for id: int in _t_variants.size():
+		if id < FIRST_TYPE:
+			continue
+		image.set_pixel(0, id, Color8(
+			_t_look[id * 4],
+			_t_look[id * 4 + 1],
+			_t_look[id * 4 + 2],
+			_t_look[id * 4 + 3]))
 
 	return image
 
@@ -762,7 +810,7 @@ func _spawn_beside(i: int, id: int) -> void:
 func _place(i: int, id: int) -> void:
 	var variant: int = randi() % int(_t_variants[id])
 	_type[i] = id
-	_variant[i] = variant
+	_variant[i] = variant | ((randi() % SEED_RANGE) << VARIANT_BITS)
 	_life[i] = _roll(_t_life_min[id], _t_life_max[id])
 	_timer[i] = _roll(_t_every_min[id], _t_every_max[id])
 	_flow[i] = randi() & 1
