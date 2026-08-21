@@ -29,6 +29,7 @@ poured fill.
 | Smoke | `#585a66` Ash Grey, `#464855` Dark Grey |
 | Steam | `#e6f0f4` Off-White, `#c3d3dc` Pale Blue |
 | Ash | `#3a3a40` Charcoal, `#2c2c31` Soot |
+| Rubble | `#8a8578` Grit, `#6d6a60` Dark Grit |
 
 ### Look parameters
 
@@ -74,6 +75,92 @@ Empty cells are transparent, so the world hangs in front of a gradient drawn
 behind it (`WorldRenderer._add_backdrop`), running from open sky at the top to
 near-black at the bottom of the world. Depth then reads for free: how dark it is
 around you is how deep you have dug.
+
+## The character
+
+You play as a body that walks the world the sand falls through
+(`Scripts/Player.gd`). A D or the arrow keys walk, Space jumps, and the mouse
+aims.
+
+The body is deliberately smaller than a cell - 48 screen pixels against a
+64-pixel block - which is what makes a block something you stand on, shelter
+behind or have to break, rather than something you wade through. It also makes
+collision cheap: a body that size can never straddle more than two cells on an
+axis, so resolving a move is a snap to a cell edge rather than a search. Solid
+cells block; liquids do not, so you sink into water rather than standing on it,
+slowed by drag, with the jump key working as a swim stroke.
+
+Nothing about the body is simulated as particles. It moves as one rigid box
+against the cell grid. Its *appearance* is the only part made of materials:
+`CharacterCosmetics` pours particles into the outline of a figure, so what you
+are wearing is a tally of what you have collected, and a denser material settles
+to the bottom of a limb the same way it would in the world.
+
+### Reach
+
+The tools the character holds act on the cell it is aiming at, found by walking
+a ray from the body toward the pointer until it either runs out of reach (six
+cells) or hits something solid. Stopping at the first blocking cell is what
+makes reach mean something: you cannot pour fire through a wall or lift sand
+from the far side of one, and the breaker lands on the face of the rock it is
+pointed at, which is exactly the cell you want to be digging out.
+
+## Tools
+
+The editor tools act on the cell under the pointer, because placing terrain is
+something you do to the world. The held tools act on the character's aim cell,
+because they are things the character does in it.
+
+| Key | Tool | What it does |
+|---|---|---|
+| 1 | Paint | *Editor.* Lays down the selected material across the brush |
+| 2 | Erase | *Editor.* Removes whatever the brush covers |
+| 3 | Inspect | *Editor.* Reads out a single particle |
+| 4 | Hand | *Held.* Picks matter up and carries it |
+| 5 | Flame gun | *Held.* Sprays fire |
+| 6 | Steam gun | *Held.* Sprays steam |
+| 7 | Breaker | *Held.* Chews stone into rubble |
+
+Paint and erase work on the whole brush footprint every frame, which is what
+you want for laying down terrain. The guns instead fire a fixed number of
+particles per second into random cells of the footprint, so they read as a
+stream with gaps in it rather than a pour - a flame that looks like it is
+burning instead of being dumped.
+
+### The hand
+
+Click to fill the hand with everything capturable under the brush, click again
+to put it down. Held particles leave the simulation entirely - they do not fall
+or react while carried - and each one keeps its colour and render seed, so a
+carried dune lands as the same dune rather than a freshly rolled one.
+
+Releasing is all or nothing. The ghost turns red the moment the destination
+cannot take the whole payload, and releasing there is refused: the hand keeps
+hold so you can move and try again. Nothing the hand picks up can be lost.
+
+### What can be carried
+
+The `capturable` flag in `Particles.gd` decides it, and nothing else does:
+
+| Can be carried | Cannot |
+|---|---|
+| Sand, Water, Lava, Ash, Rubble | Stone, Plant, Fire, Smoke, Steam, Ember |
+
+Loose matter can be gathered; terrain and living things cannot, and neither can
+fire or the gases, which are not things you close a hand around. Stone is
+deliberately out - it has to be broken into Rubble with the breaker before any
+of it can be picked up, which is what makes digging something you do rather
+than something you skip. Ash has no despawn timer for the same reason: it is a
+material you collect now, so a heap of it has to still be there when you come
+back for it.
+
+## Starting ground
+
+The world generates empty, so `simulation.gd` builds a shelf to spawn onto - a
+stone bank under a layer of sand, a pool cut into it, and a stand of plants, so
+every tool has something to be tried on. This is scaffolding until there is real
+terrain generation: delete `_build_spawn_ground` and the world is a blank sheet
+again.
 
 ## Cell size
 

@@ -59,6 +59,10 @@ func _connect_toolbar() -> void:
 		DevToolsController.Tool.PAINT: %Tools.get_node("Paint"),
 		DevToolsController.Tool.ERASE: %Tools.get_node("Erase"),
 		DevToolsController.Tool.SELECT: %Tools.get_node("Select"),
+		DevToolsController.Tool.HAND: %Tools.get_node("Hand"),
+		DevToolsController.Tool.FLAME: %Tools.get_node("Flame"),
+		DevToolsController.Tool.STEAM: %Tools.get_node("Steam"),
+		DevToolsController.Tool.BREAKER: %Tools.get_node("Breaker"),
 	}
 
 	var tool_group: ButtonGroup = ButtonGroup.new()
@@ -139,6 +143,7 @@ func _describe_particle(type_name: String, config: Dictionary, rich: bool) -> St
 	lines.append(_field("State", _state_name(config), rich))
 	lines.append(_field("Density", "%.2f" % float(config.get("density", 1.0)), rich))
 	lines.append(_field("Falls", _gravity_name(config.get("initialGravity", Vector2.ZERO)), rich))
+	lines.append(_field("Hand", _carry_name(config), rich))
 
 	var reactions: PackedStringArray = _reaction_lines(config)
 	if not reactions.is_empty():
@@ -170,6 +175,12 @@ func _state_name(config: Dictionary) -> String:
 	if config.get("liquid", false):
 		return "Liquid"
 	return "Gas"
+
+
+func _carry_name(config: Dictionary) -> String:
+	if config.get("capturable", false):
+		return "Can be carried"
+	return "Too fixed to carry"
 
 
 func _gravity_name(gravity: Vector2) -> String:
