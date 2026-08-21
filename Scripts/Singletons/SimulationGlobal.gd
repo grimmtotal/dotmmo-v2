@@ -416,6 +416,24 @@ func despawnParticle(pos: Vector2) -> int:
 	return 1
 
 
+## Whether a cell stops a body moving through it.
+##
+## Solids do; liquids and gases do not, so you wade into water and sink through
+## it rather than standing on the surface. Everything outside the world blocks,
+## which is what keeps a body inside it without a separate bounds check at every
+## call site.
+func isBlocking(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.y < 0 or cell.x >= _w or cell.y >= _h:
+		return true
+	return _t_solid[_type[(cell.y + 1) * _pw + (cell.x + 1)]] != 0
+
+
+func isLiquidAt(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.y < 0 or cell.x >= _w or cell.y >= _h:
+		return false
+	return _t_liquid[_type[(cell.y + 1) * _pw + (cell.x + 1)]] != 0
+
+
 func isVacant(pos: Vector2) -> bool:
 	var x: int = int(pos.x)
 	var y: int = int(pos.y)

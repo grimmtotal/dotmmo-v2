@@ -3,6 +3,7 @@ extends Node2D
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 const BrushCursor = preload("res://Scripts/BrushCursor.gd")
 const GhostHand = preload("res://Scripts/GhostHand.gd")
+const Player = preload("res://Scripts/Player.gd")
 
 enum Tool {
 	PAINT,
@@ -51,6 +52,18 @@ const BREAKER_RATE: float = 22.0
 ## of the gun into one cell of the world.
 const MAX_SHOTS_PER_FRAME: int = 30
 
+## The tools that are held by the character rather than pointed with the mouse.
+## They act on the cell the body is aiming at, which its reach and any wall in
+## the way both get a say in - so where you are standing decides what you can
+## touch. The editor tools keep working at the cursor, because placing terrain
+## is a thing you do to the world rather than a thing the character does in it.
+const BODY_TOOLS: Array[Tool] = [Tool.HAND, Tool.FLAME, Tool.STEAM, Tool.BREAKER]
+
+## How fast the camera closes on the character, as a fraction of the remaining
+## distance a second. Following exactly makes the whole world twitch with every
+## step; lagging slightly lets the body move within the frame.
+const CAMERA_LAG: float = 8.0
+
 const BREAKS_FROM: String = "Stone"
 const BREAKS_INTO: String = "Rubble"
 
@@ -75,8 +88,15 @@ const ZOOM_FACTOR: float = 1.1
 
 var _current_tool: Tool = Tool.PAINT
 
+## The character. Set by the scene once it exists; everything here still works
+## without one, falling back to the cursor for every tool.
+var player: Player = null
+
 var _cursor: BrushCursor
 var _hand: GhostHand
+## Cleared when the pointer is used to look around, restored the moment the
+## character is walked again.
+var _camera_follows: bool = true
 ## Fractional shots carried between frames, so a gun's rate is honoured even
 ## when it does not divide evenly into a frame.
 var _shot_credit: float = 0.0
@@ -141,6 +161,8 @@ func _setup_camera() -> void:
 	_camera = Camera2D.new()
 	_camera.name = "DevCamera"
 	_camera.position = Vector2(Global.WORLD_PIXELS) * 0.5
+	if player != null:
+		_camera.position = player.centre()
 	_camera.zoom = Vector2.ONE
 	_camera.enabled = true
 	add_child(_camera)
@@ -167,11 +189,12 @@ func _input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_MIDDLE:
 			_is_panning = event.pressed
 			if _is_panning:
+				_camera_follows = false
 				_pan_start_mouse = event.position
 				_pan_start_position = _camera.position
 			return
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _is_pointer_over_ui():
-			_perform_tool_action(_mouse_to_grid())
+			_perform_tool_action(_tool_target())
 
 
 func _process(delta: float) -> void:
@@ -183,10 +206,14 @@ func _process(delta: float) -> void:
 		_camera.position = _pan_start_position + mouse_delta / _camera.zoom
 		_clamp_camera()
 
+	_follow_player(delta)
+
 	var over_ui: bool = _is_pointer_over_ui()
 	_cursor.visible = not over_ui
+	if player != null:
+		player.aiming = not over_ui and _is_body_tool()
 	if not over_ui:
-		_cursor.grid_position = _mouse_to_grid()
+		_cursor.grid_position = _tool_target()
 		_hand.set_grid_position(Vector2i(_cursor.grid_position))
 
 	if over_ui or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
@@ -203,6 +230,36 @@ func _process(delta: float) -> void:
 		_:
 			# The hand acts on the click itself, not on the frames that follow.
 			pass
+
+
+func _is_body_tool() -> bool:
+	return player != null and BODY_TOOLS.has(_current_tool)
+
+
+## The cell the active tool acts on: what the character is aiming at for the
+## tools it holds, and the cell under the pointer for the editor ones.
+func _tool_target() -> Vector2:
+	if _is_body_tool():
+		return player.target_cell()
+	return _mouse_to_grid()
+
+
+## Walking the character takes the camera back, so looking around with the
+## pointer is a glance rather than a mode you have to leave.
+func _follow_player(delta: float) -> void:
+	if player == null:
+		return
+
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_D) \
+			or Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_RIGHT):
+		_camera_follows = true
+
+	if not _camera_follows or _is_panning:
+		return
+
+	_camera.position = _camera.position.lerp(
+		player.centre(), minf(CAMERA_LAG * delta, 1.0))
+	_clamp_camera()
 
 
 func _is_pointer_over_ui() -> bool:
