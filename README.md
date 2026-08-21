@@ -96,14 +96,13 @@ against the cell grid. Its *appearance* is the only part made of materials:
 are wearing is a tally of what you have collected, and a denser material settles
 to the bottom of a limb the same way it would in the world.
 
-### Reach
+### Aiming
 
-The tools the character holds act on the cell it is aiming at, found by walking
-a ray from the body toward the pointer until it either runs out of reach (six
-cells) or hits something solid. Stopping at the first blocking cell is what
-makes reach mean something: you cannot pour fire through a wall or lift sand
-from the far side of one, and the breaker lands on the face of the rock it is
-pointed at, which is exactly the cell you want to be digging out.
+The body supplies a direction and nothing else. It used to also cast a ray out
+to a reach and hand back the cell at the end of it, which put the tools on a
+leash: the box lagged behind the pointer and hung off the character on a visible
+line. Every tool now acts on the cell under the pointer, and the guns take only
+their direction from the body - their own flight decides where a shot ends up.
 
 ## Tools
 
@@ -139,20 +138,24 @@ until it arrives. Each gun sets its own muzzle velocity, spread cone and flight
 gravity - negative for flame and steam, so they arc upward the way the materials
 themselves do.
 
+**What flies is the particle itself, not a marker for one.** A shot carries a
+packed type-and-variant rolled at the muzzle - the same value the box passes
+around - is drawn at full cell size in that variant's own colour with the same
+lit-top, dark-bottom face the cell shader gives a settled block, and is put down
+with that exact byte when it lands. The block you watch leave the barrel is the
+block that ends up in the ground, in the same shade, with no moment where one
+thing turns into another.
+
 On impact the shot becomes an ordinary particle in the last cell it was clear
 of, which is what puts the simulation's own reactions in charge of the result:
 **nothing in the projectile code says a fireball into a plant bed sets it
 alight, or that one into water is quenched.** Those reactions already existed;
 a shot only has to deliver the material to the right cell.
 
-Landing uses `spawnExactly` rather than `spawnParticle`, because the ordinary
-spawn scatters by the material's `spread` - right for a reaction throwing off
-products, and wrong for something whose position the flight already decided.
-
 ### The box
 
-A container you sweep through the world. Left-drag fills it, right-drag pours it
-back out.
+A container you sweep through the world, sitting on the cell under the pointer.
+Left-drag fills it, right-drag pours it back out.
 
 **The box takes one material at a time.** It has no filter until the first
 particle goes in, and that particle sets it: sweep into a bank of sand and the

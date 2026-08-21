@@ -532,6 +532,23 @@ func releaseParticle(pos: Vector2, packed: int) -> bool:
 
 ## The colour a captured particle would be drawn with, for anything that has to
 ## show a particle outside the world - the box's fill level, most of all.
+## A fresh particle of a material, packed the way captureParticle hands them
+## back, but without one existing in the world yet.
+##
+## This is what lets a shot in flight be an actual particle rather than a marker
+## standing in for one: the variant and render seed are rolled at the muzzle, so
+## the grain you watch fly is the grain that lands.
+func rollParticle(type_name: String) -> int:
+	if not _t_ids.has(type_name):
+		push_error("Unknown particle type: ", type_name)
+		return 0
+
+	var id: int = _t_ids[type_name]
+	var variant: int = (randi() % int(_t_variants[id])) \
+			| ((randi() % SEED_RANGE) << VARIANT_BITS)
+	return id | (variant << 8)
+
+
 ## The name of a type id, for anything showing the player what a thing is.
 func typeName(id: int) -> String:
 	if id < FIRST_TYPE or id >= _t_name.size():

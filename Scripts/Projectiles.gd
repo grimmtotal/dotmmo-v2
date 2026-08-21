@@ -17,6 +17,13 @@ extends Node2D
 ## steam without a line here saying so. The reactions already exist; a shot only
 ## has to deliver the material to the right cell.
 ##
+## What flies is the particle itself, not a marker for one. A shot carries a
+## packed type-and-variant rolled at the muzzle - the same value the box hands
+## around - is drawn at full cell size in that variant's own colour, and is put
+## down with that exact byte when it lands. So the block you watched leave the
+## barrel is the block that ends up in the ground, in the same shade, and there
+## is no moment where one thing turns into another.
+##
 ## There are never many. A gun firing fifteen a second, each alive under a
 ## second, keeps a few dozen in the air, so this is a plain array walked in full
 ## every frame rather than anything cleverer.
@@ -30,12 +37,17 @@ const MAX_SHOTS: int = 512
 ## least once, and half a cell leaves room for a slow frame.
 const SUBSTEP: float = 0.5
 
-## Drawn size, as a fraction of a cell. A shot is a bright bead rather than a
-## block: it has to read as something in the air over terrain made of blocks.
-const SHOT_SCALE: float = 0.28
-const CORE_SCALE: float = 0.5
-const TRAIL_SCALE: float = 0.55
-const TRAIL_ALPHA: float = 0.35
+## Face shading on a flying block, matching what the cell shader does to a
+## settled one - lit along the top, dark underneath - so a particle in the air
+## and the same particle on the ground are drawn the same way.
+const BEVEL_BAND: float = 0.18
+const BEVEL_LIGHT: float = 0.16
+const BEVEL_DARK: float = 0.20
+
+## A smear back to where the shot was last frame, at the same colour and width.
+## Not a separate object - it is the particle's own motion, and without it a
+## fast one strobes between positions instead of reading as travelling.
+const TRAIL_ALPHA: float = 0.22
 
 ## What a breaker round does to what it hits. Stone is the only thing it works
 ## on, so it reads as a tool for digging rather than a second eraser.
@@ -51,7 +63,9 @@ class Shot:
 	var previous: Vector2
 	var velocity: Vector2
 	var gravity: float
-	var material: String
+	## Packed type-and-variant, exactly as SimulationGlobal hands them around.
+	## Zero for a breaker round, which carries no material of its own.
+	var packed: int
 	## Breaker rounds convert what they hit instead of leaving anything behind.
 	var breaks: bool
 	var colour: Color
@@ -68,7 +82,7 @@ func count() -> int:
 ## Puts one shot in the air. `spread` is the half-angle of the cone it may leave
 ## the muzzle in, in radians, which is what stops a held trigger drawing a
 ## perfectly straight line of beads.
-func fire(from: Vector2, direction: Vector2, config: Dictionary, colour: Color) -> void:
+func fire(from: Vector2, direction: Vector2, config: Dictionary) -> void:
 	if _shots.size() >= MAX_SHOTS:
 		return
 
@@ -76,15 +90,19 @@ func fire(from: Vector2, direction: Vector2, config: Dictionary, colour: Color) 
 	var aim: Vector2 = direction.rotated(randf_range(-spread, spread))
 	var speed: float = float(config.get("speed", 1000.0)) * randf_range(0.85, 1.15)
 
+	var material: String = String(config.get("material", ""))
 	var shot := Shot.new()
 	shot.position = from
 	shot.previous = from
 	shot.velocity = aim * speed
 	shot.gravity = float(config.get("gravity", 0.0))
-	shot.material = String(config.get("material", ""))
 	shot.breaks = bool(config.get("breaks", false))
-	shot.colour = colour
+	shot.packed = 0 if material.is_empty() else SimulationGlobal.rollParticle(material)
 	shot.life = float(config.get("life", 1.2))
+	# A breaker round has no material to take a colour from, so it borrows the
+	# one it is about to make.
+	shot.colour = SimulationGlobal.colorOf(shot.packed) if shot.packed != 0 \
+			else SimulationGlobal.colorOf(SimulationGlobal.rollParticle(BREAKS_INTO))
 
 	_shots.append(shot)
 
@@ -150,9 +168,10 @@ func _land(shot: Shot, behind: Vector2i, ahead: Vector2i) -> void:
 			SimulationGlobal.spawnExactly(BREAKS_INTO, Vector2(ahead))
 		return
 
-	if not shot.material.is_empty():
-		# Exactly, not scattered: the flight already decided this cell.
-		SimulationGlobal.spawnExactly(shot.material, Vector2(behind))
+	if shot.packed != 0:
+		# The exact particle that was in the air, in the exact cell the flight
+		# decided - no scatter, and no re-rolled colour.
+		SimulationGlobal.releaseParticle(Vector2(behind), shot.packed)
 
 
 func _cell(point: Vector2) -> Vector2i:
@@ -162,15 +181,20 @@ func _cell(point: Vector2) -> Vector2i:
 
 func _draw() -> void:
 	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var size: float = scale * SHOT_SCALE
+	var half := Vector2(scale, scale) * 0.5
 
 	for shot: Shot in _shots:
-		# A streak back to where it was last frame, so a fast shot reads as
-		# moving rather than as a bead teleporting across the screen.
 		var trail: Color = shot.colour
 		trail.a = TRAIL_ALPHA
-		draw_line(shot.previous, shot.position, trail, size * TRAIL_SCALE)
+		draw_line(shot.previous, shot.position, trail, scale)
 
-		draw_circle(shot.position, size * 0.5, shot.colour)
-		draw_circle(shot.position, size * 0.5 * CORE_SCALE,
-			shot.colour.lerp(Color.WHITE, 0.65))
+		var block := Rect2(shot.position - half, Vector2(scale, scale))
+		draw_rect(block, shot.colour, true)
+
+		# The same lit-top, dark-bottom face the cell shader gives a settled
+		# block, so a particle does not change how it is drawn when it lands.
+		var band: float = scale * BEVEL_BAND
+		draw_rect(Rect2(block.position, Vector2(scale, band)),
+			shot.colour.lightened(BEVEL_LIGHT), true)
+		draw_rect(Rect2(block.position + Vector2(0.0, scale - band), Vector2(scale, band)),
+			shot.colour.darkened(BEVEL_DARK), true)
