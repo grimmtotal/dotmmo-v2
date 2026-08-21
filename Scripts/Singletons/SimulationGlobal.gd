@@ -401,6 +401,31 @@ func spawnAt(id: int, x: int, y: int) -> bool:
 	return _spawn(i, id)
 
 
+## Spawns in exactly the cell asked for, skipping the material's spread jitter.
+##
+## `spawnParticle` scatters by the material's `spread`, which is right for a
+## reaction throwing off products and wrong for anything whose position has
+## already been decided: a shot's landing cell comes from its flight, and
+## jittering it afterwards would quietly undo the aiming.
+func spawnExactly(type_name: String, pos: Vector2) -> bool:
+	if not _t_ids.has(type_name):
+		push_error("Unknown particle type: ", type_name)
+		return false
+
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return false
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	if _type[i] != EMPTY:
+		return false
+
+	_place(i, _t_ids[type_name])
+	_wake_around(i)
+	return true
+
+
 func despawnParticle(pos: Vector2) -> int:
 	var x: int = int(pos.x)
 	var y: int = int(pos.y)

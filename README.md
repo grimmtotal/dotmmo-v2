@@ -117,21 +117,57 @@ because they are things the character does in it.
 | 2 | Erase | *Editor.* Removes whatever the brush covers |
 | 3 | Inspect | *Editor.* Reads out a single particle |
 | 4 | Hand | *Held.* Picks matter up and carries it |
-| 5 | Flame gun | *Held.* Sprays fire |
-| 6 | Steam gun | *Held.* Sprays steam |
-| 7 | Breaker | *Held.* Chews stone into rubble |
+| 5 | Flame gun | *Held.* Fires arcing fireballs |
+| 6 | Steam gun | *Held.* Fires steam |
+| 7 | Breaker | *Held.* Fires a round that breaks stone into rubble |
 
 Paint and erase work on the whole brush footprint every frame, which is what
-you want for laying down terrain. The guns instead fire a fixed number of
-particles per second into random cells of the footprint, so they read as a
-stream with gaps in it rather than a pour - a flame that looks like it is
-burning instead of being dumped.
+you want for laying down terrain. The guns are not area tools at all.
+
+### The guns are ballistic
+
+A fired particle cannot be a world cell while it is travelling. The simulation
+gives every material one fixed way of moving - fall, rise, flow, sit still -
+chosen from its type and shared by every grain of it, with no per-cell velocity
+anywhere in the grid to override it. Adding one would cost bytes on all 62,500
+cells and a branch in the hot loop, to serve the handful of grains that are ever
+actually in the air.
+
+So a shot lives outside the grid (`Scripts/Projectiles.gd`): a position, a
+velocity and a gravity of its own, with the simulation knowing nothing about it
+until it arrives. Each gun sets its own muzzle velocity, spread cone and flight
+gravity - negative for flame and steam, so they arc upward the way the materials
+themselves do.
+
+On impact the shot becomes an ordinary particle in the last cell it was clear
+of, which is what puts the simulation's own reactions in charge of the result:
+**nothing in the projectile code says a fireball into a plant bed sets it
+alight, or that one into water is quenched.** Those reactions already existed;
+a shot only has to deliver the material to the right cell.
+
+Landing uses `spawnExactly` rather than `spawnParticle`, because the ordinary
+spawn scatters by the material's `spread` - right for a reaction throwing off
+products, and wrong for something whose position the flight already decided.
 
 ### The hand
 
-Click to fill the hand with everything capturable under the brush, click again
-to put it down. Held particles leave the simulation entirely - they do not fall
-or react while carried - and each one keeps its colour and render seed, so a
+A spectral hand the character reaches out with. It has to be a ghost rather than
+a real hand, and the scale is what decides that: a block is 64 pixels and the
+whole character is 48, so a hand that could actually close around a block would
+be bigger than the person holding it. Drawing it as something conjured, sized to
+the handful rather than to the body, is the only reading of that which is not
+absurd - and it matches what it does, which is closer to telekinesis than to
+lifting.
+
+It grips rather than holds. The palm sits behind the handful and the fingers
+come forward over it, so the material is inside the grasp instead of stacked on
+top of a shape - which is why the fingers are drawn after the payload and the
+palm before it. The hand is open while empty and closed once full, and turns
+with the aim.
+
+Click to fill it with everything capturable under the brush, click again to put
+it down. Held particles leave the simulation entirely - they do not fall or
+react while carried - and each one keeps its colour and render seed, so a
 carried dune lands as the same dune rather than a freshly rolled one.
 
 Releasing is all or nothing. The ghost turns red the moment the destination

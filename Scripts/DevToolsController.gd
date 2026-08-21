@@ -4,6 +4,7 @@ const Particles = preload("res://Scripts/Singletons/Particles.gd")
 const BrushCursor = preload("res://Scripts/BrushCursor.gd")
 const GhostHand = preload("res://Scripts/GhostHand.gd")
 const Player = preload("res://Scripts/Player.gd")
+const Projectiles = preload("res://Scripts/Projectiles.gd")
 
 enum Tool {
 	PAINT,
@@ -29,28 +30,46 @@ const SELECT_COLOR: Color = Color(0.55, 0.9, 1.0)
 const HAND_COLOR: Color = Color(0.85, 0.9, 1.0)
 const BREAKER_COLOR: Color = Color(0.95, 0.82, 0.5)
 
-## What the guns fire, and how fast.
+## The guns, as ballistics rather than as area effects.
 ##
-## Rate matters more than it looks. The paint tool spawns across its whole
-## footprint every frame, which is right for laying down terrain and wrong for
-## anything meant to read as a jet - it buries the target instantly and the
-## simulation never gets a frame to show the result. Firing a fixed number of
-## particles a second into random cells of the footprint instead gives a stream
-## with gaps in it, which is what makes a flame look like it is burning rather
-## than being poured.
+## Every one of these fires a shot that leaves the muzzle along the aim and
+## travels until it hits something, so where a gun lands its material is decided
+## by the flight rather than by the cursor - the arc, the range and whatever is
+## in the way all get a say. Shots resolve into ordinary particles when they
+## land, which is what puts the simulation's own reactions in charge of the
+## result: nothing here says a fireball into water makes steam.
+##
+## `speed` is muzzle velocity in pixels a second, `gravity` the pull on the shot
+## while it flies - negative for the things that rise, so flame and steam arc
+## upward the way the materials themselves do. `spread` is the half-angle of the
+## muzzle cone in radians, which is what keeps a held trigger from drawing a
+## straight line of beads. `rate` is far lower than the old area tools used:
+## with a shot you can watch travelling, fifteen a second is already a torrent.
 const GUNS: Dictionary = {
-	Tool.FLAME: {"material": "Fire", "rate": 45.0},
-	Tool.STEAM: {"material": "Steam", "rate": 45.0},
+	Tool.FLAME: {
+		"material": "Fire", "rate": 15.0, "speed": 1500.0,
+		"gravity": -700.0, "spread": 0.11, "life": 1.1,
+	},
+	Tool.STEAM: {
+		"material": "Steam", "rate": 15.0, "speed": 1200.0,
+		"gravity": -1100.0, "spread": 0.15, "life": 1.1,
+	},
+	# Breaks rock instead of leaving anything behind, so it carries no material.
+	# Slow, fast and tightly grouped: a single heavy round you aim, and the only
+	# way to get carryable matter out of terrain.
+	Tool.BREAKER: {
+		"material": "", "breaks": true, "rate": 5.0, "speed": 2400.0,
+		"gravity": 0.0, "spread": 0.015, "life": 0.7,
+	},
 }
 
-## The breaker does not spawn anything - it turns Stone it touches into Rubble,
-## which is the only way to get carryable matter out of terrain. Slower than the
-## guns on purpose: chewing through rock should cost you a moment.
-const BREAKER_RATE: float = 22.0
-
 ## Ceiling on a single frame's shots, so a hitch does not empty a whole second
-## of the gun into one cell of the world.
-const MAX_SHOTS_PER_FRAME: int = 30
+## of the gun down the barrel at once.
+const MAX_SHOTS_PER_FRAME: int = 8
+
+## How far from the body a shot starts, so it leaves at the hand rather than out
+## of the middle of the chest.
+const MUZZLE_OFFSET: float = 26.0
 
 ## The tools that are held by the character rather than pointed with the mouse.
 ## They act on the cell the body is aiming at, which its reach and any wall in
@@ -64,8 +83,6 @@ const BODY_TOOLS: Array[Tool] = [Tool.HAND, Tool.FLAME, Tool.STEAM, Tool.BREAKER
 ## step; lagging slightly lets the body move within the frame.
 const CAMERA_LAG: float = 8.0
 
-const BREAKS_FROM: String = "Stone"
-const BREAKS_INTO: String = "Rubble"
 
 const MIN_ZOOM: float = 0.2
 const MAX_ZOOM: float = 4.0
@@ -94,6 +111,7 @@ var player: Player = null
 
 var _cursor: BrushCursor
 var _hand: GhostHand
+var _projectiles: Projectiles
 ## Cleared when the pointer is used to look around, restored the moment the
 ## character is walked again.
 var _camera_follows: bool = true
@@ -108,6 +126,7 @@ var _pan_start_position: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
 	_setup_camera()
+	_setup_projectiles()
 	_setup_cursor()
 	_setup_hand()
 	set_process_input(dev_mode_enabled)
@@ -121,6 +140,13 @@ func _setup_cursor() -> void:
 	_cursor.z_index = 100
 	add_child(_cursor)
 	_refresh_cursor_color()
+
+
+func _setup_projectiles() -> void:
+	_projectiles = Projectiles.new()
+	_projectiles.name = "Projectiles"
+	_projectiles.z_index = 60
+	add_child(_projectiles)
 
 
 func _setup_hand() -> void:
@@ -209,12 +235,21 @@ func _process(delta: float) -> void:
 	_follow_player(delta)
 
 	var over_ui: bool = _is_pointer_over_ui()
-	_cursor.visible = not over_ui
+	# The brush box means nothing to a gun that goes where it is pointed, and
+	# the hand draws itself, so the box belongs to the editor tools alone.
+	_cursor.visible = not over_ui and not _is_body_tool()
+	_hand.visible = not over_ui and _current_tool == Tool.HAND
 	if player != null:
 		player.aiming = not over_ui and _is_body_tool()
+		# Only the hand is reach-limited, so only the hand draws a line that
+		# stops where its reach does.
+		player.aim_shows_reach = _current_tool == Tool.HAND
 	if not over_ui:
 		_cursor.grid_position = _tool_target()
 		_hand.set_grid_position(Vector2i(_cursor.grid_position))
+		_hand.set_span(float(brush_radius * 2 - 1))
+		if player != null:
+			_hand.set_aim(player.aim_direction())
 
 	if over_ui or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		# Primed, so the next trigger pull fires on its first frame instead of
@@ -340,35 +375,36 @@ func _use_hand(center: Vector2) -> void:
 ## Fires the active gun for one frame's worth of its rate. `delta` of zero is
 ## the click itself, which spends the credit primed while the trigger was up and
 ## so always gets one shot away immediately.
-func _fire(delta: float, center: Vector2) -> void:
-	var rate: float = BREAKER_RATE
-	if GUNS.has(_current_tool):
-		rate = float((GUNS[_current_tool] as Dictionary)["rate"])
+##
+## `fallback` is only reached without a character to fire from - the editor
+## still has to be usable then, so shots leave the cursor pointing right.
+func _fire(delta: float, fallback: Vector2) -> void:
+	var config: Dictionary = GUNS[_current_tool] as Dictionary
 
-	_shot_credit += rate * delta
+	_shot_credit += float(config["rate"]) * delta
 	var shots: int = mini(int(_shot_credit), MAX_SHOTS_PER_FRAME)
 	if shots <= 0:
 		return
 	_shot_credit -= float(shots)
 
-	var cells: Array = _brush_cells(center)
+	var direction: Vector2 = Vector2.RIGHT
+	var muzzle: Vector2 = (fallback + Vector2(0.5, 0.5)) * Global.WORLD_PIXEL_SCALE
+	if player != null:
+		direction = player.aim_direction()
+		muzzle = player.centre() + direction * MUZZLE_OFFSET
+
+	var colour: Color = _shot_colour(config)
 	for shot: int in shots:
-		var cell: Vector2 = cells[randi() % cells.size()]
-		if _current_tool == Tool.BREAKER:
-			_break_cell(cell)
-		else:
-			SimulationGlobal.spawnParticle(
-				(GUNS[_current_tool] as Dictionary)["material"], cell)
+		_projectiles.fire(muzzle, direction, config, colour)
 
 
-## Turns one cell of Stone into Rubble. Anything else the breaker is pointed at
-## is left alone, so it reads as a tool for digging rather than a second eraser.
-func _break_cell(cell: Vector2) -> void:
-	var data: Dictionary = SimulationGlobal.getParticle(cell)
-	if data.get("type", "") != BREAKS_FROM:
-		return
-	SimulationGlobal.despawnParticle(cell)
-	SimulationGlobal.spawnParticle(BREAKS_INTO, cell)
+## What a shot is drawn in: its own material's colour, or a pale spark for the
+## breaker, which carries no material to borrow one from.
+func _shot_colour(config: Dictionary) -> Color:
+	var material: String = String(config.get("material", ""))
+	if material.is_empty():
+		return BREAKER_COLOR
+	return _material_color(material)
 
 
 func _spawn_brush(center: Vector2) -> void:
