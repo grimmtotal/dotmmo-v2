@@ -71,11 +71,14 @@ const MAX_SHOTS_PER_FRAME: int = 8
 ## out of the middle of the chest.
 const MUZZLE_OFFSET: float = 26.0
 
-## The tools that are held by the character rather than pointed with the mouse.
-## They act on the cell the body is aiming at, which its reach and any wall in
-## the way both get a say in - so where you are standing decides what you can
-## touch. The editor tools keep working at the cursor, because placing terrain
-## is a thing you do to the world rather than a thing the character does in it.
+## The tools the character holds, as opposed to the ones that edit the world.
+##
+## Both kinds act where the pointer is - the difference is what supplies the
+## rest. A gun takes only its direction from the body and leaves the flight to
+## decide where its shot ends up, and the box draws itself instead of using the
+## brush outline. The editor tools keep the plain brush box, because placing
+## terrain is a thing you do to the world rather than a thing the character does
+## in it.
 const BODY_TOOLS: Array[Tool] = [Tool.BOX, Tool.FLAME, Tool.STEAM, Tool.BREAKER]
 
 ## How fast the camera closes on the character, as a fraction of the remaining
@@ -220,7 +223,7 @@ func _input(event: InputEvent) -> void:
 				_pan_start_position = _camera.position
 			return
 		elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _is_pointer_over_ui():
-			_perform_tool_action(_tool_target())
+			_perform_tool_action(_mouse_to_grid())
 
 
 func _process(delta: float) -> void:
@@ -239,13 +242,12 @@ func _process(delta: float) -> void:
 	# the box draws itself, so the brush box belongs to the editor tools alone.
 	_cursor.visible = not over_ui and not _is_body_tool()
 	_box.visible = not over_ui and _current_tool == Tool.BOX
-	if player != null:
-		player.aiming = not over_ui and _is_body_tool()
-		# Only the box is reach-limited, so only the box draws a line that
-		# stops where its reach does.
-		player.aim_shows_reach = _current_tool == Tool.BOX
 	if not over_ui:
-		_cursor.grid_position = _tool_target()
+		# Every tool acts where the pointer is. The box used to sit at the end
+		# of a reach cast from the body, which meant it lagged behind the mouse
+		# and hung off the character on a line - the box is the thing you are
+		# pointing with, so it goes where you point it.
+		_cursor.grid_position = _mouse_to_grid()
 		if _current_tool == Tool.BOX:
 			var target: Vector2 = _cursor.grid_position
 			_box.aim_at(_brush_cells(target), _aim_point(target), brush_radius)
@@ -278,14 +280,6 @@ func _process(delta: float) -> void:
 
 func _is_body_tool() -> bool:
 	return player != null and BODY_TOOLS.has(_current_tool)
-
-
-## The cell the active tool acts on: what the character is aiming at for the
-## tools it holds, and the cell under the pointer for the editor ones.
-func _tool_target() -> Vector2:
-	if _is_body_tool():
-		return player.target_cell()
-	return _mouse_to_grid()
 
 
 ## Walking the character takes the camera back, so looking around with the
@@ -396,18 +390,8 @@ func _fire(delta: float, fallback: Vector2) -> void:
 		direction = player.aim_direction()
 		muzzle = player.centre() + direction * MUZZLE_OFFSET
 
-	var colour: Color = _shot_colour(config)
 	for shot: int in shots:
-		_projectiles.fire(muzzle, direction, config, colour)
-
-
-## What a shot is drawn in: its own material's colour, or a pale spark for the
-## breaker, which carries no material to borrow one from.
-func _shot_colour(config: Dictionary) -> Color:
-	var material: String = String(config.get("material", ""))
-	if material.is_empty():
-		return BREAKER_COLOR
-	return _material_color(material)
+		_projectiles.fire(muzzle, direction, config)
 
 
 func _spawn_brush(center: Vector2) -> void:

@@ -41,14 +41,6 @@ const LIQUID_GRAVITY: float = 0.22
 const LIQUID_DRAG: float = 6.0
 const SWIM_SPEED: float = -180.0
 
-## How far the box reaches, in cells. Short enough that getting to
-## somewhere is a real part of doing anything to it.
-const REACH_CELLS: int = 6
-
-## Resolution of the aim raycast, as a fraction of a cell. Quarter-cell steps
-## cannot skip a block, since a block is four steps wide.
-const RAY_STEP: float = 0.25
-
 ## Longest frame the physics will integrate in one go. A hitch that moved the
 ## body further than a cell could put it through a wall, so a slow frame is
 ## taken as a short one instead - the body lags rather than tunnelling.
@@ -76,30 +68,8 @@ const STARTING_FILL: Dictionary = {
 	"right_eye": "Water",
 }
 
-const AIM_LINE: Color = Color(1, 1, 1, 0.22)
-const AIM_WIDTH: float = 2.0
-
-## How long the aim line runs for a tool with no reach limit. A gun's shot goes
-## as far as its flight takes it, so the line is a direction indicator rather
-## than a statement about range - drawing it out to the box's reach would be a
-## lie about where the shot lands.
-const AIM_RAY_CELLS: float = 3.5
-
 var velocity: Vector2 = Vector2.ZERO
 var cosmetics: CharacterCosmetics
-
-## Whether a tool that aims from the body is selected, which is the only time
-## the aim line is worth drawing.
-var aiming: bool = false:
-	set(value):
-		if value == aiming:
-			return
-		aiming = value
-		queue_redraw()
-
-## Whether the aim line should stop where the reach does. True for the box,
-## which can only touch what it can get to; false for the guns, which cannot.
-var aim_shows_reach: bool = true
 
 var _sprite: Sprite2D
 var _on_ground: bool = false
@@ -268,9 +238,14 @@ func _is_submerged() -> bool:
 
 
 # ---------------------------------------------------------------------- aiming
+#
+# The body only supplies a direction now. It used to also cast a ray out to a
+# reach and hand back the cell at the end of it, which put the tools on a leash
+# hanging off the character - the box lagged behind the pointer and sat at the
+# end of a visible line. Tools go where the pointer goes; the guns take the
+# direction from here and their own flight decides the rest.
 
-## The middle of the body, which is where a reach is measured from and where the
-## aim line starts.
+## The middle of the body, and where a shot leaves from.
 func centre() -> Vector2:
 	return position - Vector2(0.0, BODY_HEIGHT * 0.5)
 
@@ -280,47 +255,3 @@ func aim_direction() -> Vector2:
 	if to_pointer.length_squared() < 1.0:
 		return Vector2.LEFT if _facing_left else Vector2.RIGHT
 	return to_pointer.normalized()
-
-
-## The cell the body is aiming at: the first one along the aim that stops a
-## reach, or the furthest one within it when nothing does.
-##
-## Stopping at the first blocking cell is what makes reach mean something. You
-## cannot pour fire through a wall or lift sand from the far side of one, and
-## the breaker lands on the face of the rock it is pointed at, which is exactly
-## the cell you want to be digging out.
-func target_cell() -> Vector2:
-	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var origin: Vector2 = centre()
-	var direction: Vector2 = aim_direction()
-	var reach: float = float(REACH_CELLS) * scale
-	var step: float = scale * RAY_STEP
-
-	var furthest: Vector2 = Vector2(floorf(origin.x / scale), floorf(origin.y / scale))
-	var travelled: float = step
-	while travelled <= reach:
-		var point: Vector2 = origin + direction * travelled
-		var cell: Vector2 = Vector2(floorf(point.x / scale), floorf(point.y / scale))
-		if SimulationGlobal.isBlocking(Vector2i(cell)):
-			return cell
-		furthest = cell
-		travelled += step
-
-	return furthest
-
-
-func _process(_delta: float) -> void:
-	if aiming:
-		queue_redraw()
-
-
-func _draw() -> void:
-	if not aiming:
-		return
-
-	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var from: Vector2 = centre()
-	var to: Vector2 = from + aim_direction() * AIM_RAY_CELLS * scale
-	if aim_shows_reach:
-		to = (target_cell() + Vector2(0.5, 0.5)) * scale
-	draw_line(to_local(from), to_local(to), AIM_LINE, AIM_WIDTH)
