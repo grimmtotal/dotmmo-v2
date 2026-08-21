@@ -24,11 +24,11 @@ const DEFAULTS = {
 	},
 	"solid": false,
 	"liquid": false,
-	# Whether the ghost hand can pick this up and carry it.
+	# Whether the collector box can pick this up and carry it.
 	#
 	# Loose matter can be gathered and moved; terrain and living things cannot,
-	# and neither can fire or the gases, which are not things you close a hand
-	# around. Stone is deliberately out: it has to be broken into Rubble with
+	# and neither can fire or the gases, which are not things you scoop into a
+	# box. Stone is deliberately out: it has to be broken into Rubble with
 	# the breaker before any of it can be carried, which is what makes digging
 	# a thing you do rather than a thing you skip.
 	"capturable": false,

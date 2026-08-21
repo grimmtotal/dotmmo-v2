@@ -2,7 +2,7 @@ extends Node2D
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 const BrushCursor = preload("res://Scripts/BrushCursor.gd")
-const GhostHand = preload("res://Scripts/GhostHand.gd")
+const CollectorBox = preload("res://Scripts/CollectorBox.gd")
 const Player = preload("res://Scripts/Player.gd")
 const Projectiles = preload("res://Scripts/Projectiles.gd")
 
@@ -10,7 +10,7 @@ enum Tool {
 	PAINT,
 	ERASE,
 	SELECT,
-	HAND,
+	BOX,
 	FLAME,
 	STEAM,
 	BREAKER
@@ -27,7 +27,7 @@ signal brush_radius_changed(radius: int)
 ## click will do without anyone reading the toolbar.
 const ERASE_COLOR: Color = Color(1.0, 0.36, 0.36)
 const SELECT_COLOR: Color = Color(0.55, 0.9, 1.0)
-const HAND_COLOR: Color = Color(0.85, 0.9, 1.0)
+const BOX_COLOR: Color = Color(0.85, 0.9, 1.0)
 const BREAKER_COLOR: Color = Color(0.95, 0.82, 0.5)
 
 ## The guns, as ballistics rather than as area effects.
@@ -67,8 +67,8 @@ const GUNS: Dictionary = {
 ## of the gun down the barrel at once.
 const MAX_SHOTS_PER_FRAME: int = 8
 
-## How far from the body a shot starts, so it leaves at the hand rather than out
-## of the middle of the chest.
+## How far from the body a shot starts, so it leaves at arm's length rather than
+## out of the middle of the chest.
 const MUZZLE_OFFSET: float = 26.0
 
 ## The tools that are held by the character rather than pointed with the mouse.
@@ -76,7 +76,7 @@ const MUZZLE_OFFSET: float = 26.0
 ## the way both get a say in - so where you are standing decides what you can
 ## touch. The editor tools keep working at the cursor, because placing terrain
 ## is a thing you do to the world rather than a thing the character does in it.
-const BODY_TOOLS: Array[Tool] = [Tool.HAND, Tool.FLAME, Tool.STEAM, Tool.BREAKER]
+const BODY_TOOLS: Array[Tool] = [Tool.BOX, Tool.FLAME, Tool.STEAM, Tool.BREAKER]
 
 ## How fast the camera closes on the character, as a fraction of the remaining
 ## distance a second. Following exactly makes the whole world twitch with every
@@ -110,7 +110,7 @@ var _current_tool: Tool = Tool.PAINT
 var player: Player = null
 
 var _cursor: BrushCursor
-var _hand: GhostHand
+var _box: CollectorBox
 var _projectiles: Projectiles
 ## Cleared when the pointer is used to look around, restored the moment the
 ## character is walked again.
@@ -128,7 +128,7 @@ func _ready() -> void:
 	_setup_camera()
 	_setup_projectiles()
 	_setup_cursor()
-	_setup_hand()
+	_setup_box()
 	set_process_input(dev_mode_enabled)
 	set_process(dev_mode_enabled)
 
@@ -149,11 +149,11 @@ func _setup_projectiles() -> void:
 	add_child(_projectiles)
 
 
-func _setup_hand() -> void:
-	_hand = GhostHand.new()
-	_hand.name = "GhostHand"
-	_hand.z_index = 99
-	add_child(_hand)
+func _setup_box() -> void:
+	_box = CollectorBox.new()
+	_box.name = "CollectorBox"
+	_box.z_index = 99
+	add_child(_box)
 
 
 func _refresh_cursor_color() -> void:
@@ -164,8 +164,8 @@ func _refresh_cursor_color() -> void:
 			_cursor.color = ERASE_COLOR
 		Tool.SELECT:
 			_cursor.color = SELECT_COLOR
-		Tool.HAND:
-			_cursor.color = HAND_COLOR
+		Tool.BOX:
+			_cursor.color = BOX_COLOR
 		Tool.BREAKER:
 			_cursor.color = BREAKER_COLOR
 		Tool.FLAME, Tool.STEAM:
@@ -236,20 +236,30 @@ func _process(delta: float) -> void:
 
 	var over_ui: bool = _is_pointer_over_ui()
 	# The brush box means nothing to a gun that goes where it is pointed, and
-	# the hand draws itself, so the box belongs to the editor tools alone.
+	# the box draws itself, so the brush box belongs to the editor tools alone.
 	_cursor.visible = not over_ui and not _is_body_tool()
-	_hand.visible = not over_ui and _current_tool == Tool.HAND
+	_box.visible = not over_ui and _current_tool == Tool.BOX
 	if player != null:
 		player.aiming = not over_ui and _is_body_tool()
-		# Only the hand is reach-limited, so only the hand draws a line that
+		# Only the box is reach-limited, so only the box draws a line that
 		# stops where its reach does.
-		player.aim_shows_reach = _current_tool == Tool.HAND
+		player.aim_shows_reach = _current_tool == Tool.BOX
 	if not over_ui:
 		_cursor.grid_position = _tool_target()
-		_hand.set_grid_position(Vector2i(_cursor.grid_position))
-		_hand.set_span(float(brush_radius * 2 - 1))
-		if player != null:
-			_hand.set_aim(player.aim_direction())
+		if _current_tool == Tool.BOX:
+			var target: Vector2 = _cursor.grid_position
+			_box.aim_at(_brush_cells(target), _aim_point(target), brush_radius)
+
+	# The box is worked by dragging rather than clicking: hold left to sweep
+	# material in, hold right to pour it back out.
+	if _current_tool == Tool.BOX:
+		if over_ui:
+			return
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			_box.scoop()
+		elif Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+			_box.pour()
+		return
 
 	if over_ui or not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		# Primed, so the next trigger pull fires on its first frame instead of
@@ -263,7 +273,6 @@ func _process(delta: float) -> void:
 		Tool.FLAME, Tool.STEAM, Tool.BREAKER:
 			_fire(delta, _cursor.grid_position)
 		_:
-			# The hand acts on the click itself, not on the frames that follow.
 			pass
 
 
@@ -316,10 +325,10 @@ func _clamp_camera() -> void:
 
 
 func set_tool(tool: Tool) -> void:
-	# Anything still in the hand is put down before the hand goes away, or it
-	# would sit out of the world with no ghost on screen to say it exists.
-	if _current_tool == Tool.HAND and tool != Tool.HAND and _hand != null:
-		_hand.return_to_world()
+	# Anything still in the box is put down before the box goes away, or it
+	# would sit out of the world with nothing on screen to say it exists.
+	if _current_tool == Tool.BOX and tool != Tool.BOX and _box != null:
+		_box.empty_out()
 
 	_current_tool = tool
 	_refresh_cursor_color()
@@ -356,20 +365,14 @@ func _perform_tool_action(grid_pos: Vector2) -> void:
 			_erase_brush(grid_pos)
 		Tool.SELECT:
 			_select_particle(grid_pos)
-		Tool.HAND:
-			_use_hand(grid_pos)
 		Tool.FLAME, Tool.STEAM, Tool.BREAKER:
 			_fire(0.0, grid_pos)
 
 
-## One click of the hand: fill it if it is empty, empty it if it is full. A
-## release onto somewhere the payload does not fit is refused rather than
-## dropped, so the hand keeps hold of it and you can move and click again.
-func _use_hand(center: Vector2) -> void:
-	if _hand.is_holding():
-		_hand.release()
-	else:
-		_hand.grab(_brush_cells(center), Vector2i(center))
+## Where the box measures "nearest" from: the point being aimed at, in world
+## pixels, which is what the pointer actually controls.
+func _aim_point(target: Vector2) -> Vector2:
+	return (target + Vector2(0.5, 0.5)) * float(Global.WORLD_PIXEL_SCALE)
 
 
 ## Fires the active gun for one frame's worth of its rate. `delta` of zero is
@@ -444,7 +447,7 @@ func _match_hotkey(key: int) -> void:
 		KEY_3:
 			set_tool(Tool.SELECT)
 		KEY_4:
-			set_tool(Tool.HAND)
+			set_tool(Tool.BOX)
 		KEY_5:
 			set_tool(Tool.FLAME)
 		KEY_6:

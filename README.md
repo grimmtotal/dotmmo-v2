@@ -116,7 +116,7 @@ because they are things the character does in it.
 | 1 | Paint | *Editor.* Lays down the selected material across the brush |
 | 2 | Erase | *Editor.* Removes whatever the brush covers |
 | 3 | Inspect | *Editor.* Reads out a single particle |
-| 4 | Hand | *Held.* Picks matter up and carries it |
+| 4 | Box | *Held.* Collects one material and carries it |
 | 5 | Flame gun | *Held.* Fires arcing fireballs |
 | 6 | Steam gun | *Held.* Fires steam |
 | 7 | Breaker | *Held.* Fires a round that breaks stone into rubble |
@@ -149,41 +149,48 @@ Landing uses `spawnExactly` rather than `spawnParticle`, because the ordinary
 spawn scatters by the material's `spread` - right for a reaction throwing off
 products, and wrong for something whose position the flight already decided.
 
-### The hand
+### The box
 
-A spectral hand the character reaches out with. It has to be a ghost rather than
-a real hand, and the scale is what decides that: a block is 64 pixels and the
-whole character is 48, so a hand that could actually close around a block would
-be bigger than the person holding it. Drawing it as something conjured, sized to
-the handful rather than to the body, is the only reading of that which is not
-absurd - and it matches what it does, which is closer to telekinesis than to
-lifting.
+A container you sweep through the world. Left-drag fills it, right-drag pours it
+back out.
 
-It grips rather than holds. The palm sits behind the handful and the fingers
-come forward over it, so the material is inside the grasp instead of stacked on
-top of a shape - which is why the fingers are drawn after the payload and the
-palm before it. The hand is open while empty and closed once full, and turns
-with the aim.
+**The box takes one material at a time.** It has no filter until the first
+particle goes in, and that particle sets it: sweep into a bank of sand and the
+box is a sand box for as long as it holds any, ignoring the water and the rubble
+it passes over afterwards. That is the whole rule, and it is what makes a sweep
+predictable - you can drag through mixed ground without having to be careful
+about what else is under the mouth. The filter clears the moment the last
+particle leaves.
 
-Click to fill it with everything capturable under the brush, click again to put
-it down. Held particles leave the simulation entirely - they do not fall or
-react while carried - and each one keeps its colour and render seed, so a
-carried dune lands as the same dune rather than a freshly rolled one.
+**When the first sweep touches more than one material, the one nearest where you
+are pointing wins.** Nearest rather than first-found matters: a sweep that
+starts across a boundary would otherwise lock onto whichever cell the loop
+happened to reach first, which from the outside looks arbitrary - pointing at
+the sand and getting a box of water. The tooltip names what will be taken before
+you press, and the cell it will be taken from is outlined, so the choice is
+never a surprise.
 
-Releasing is all or nothing. The ghost turns red the moment the destination
-cannot take the whole payload, and releasing there is refused: the hand keeps
-hold so you can move and try again. Nothing the hand picks up can be lost.
+**Capacity comes from the brush size**, and the box draws its own fill level, so
+"how much have I got" is answered by looking at it. The mouth only reaches what
+it covers, so filling a box bigger than its footprint means dragging it across
+the ground rather than holding it still.
 
-### What can be carried
+Contents are not a picture of what was collected. The box is a container, not a
+snapshot: it holds a count, not a shape, which is why it can be filled from a
+dozen scattered cells and poured out somewhere entirely different. Each grain
+still keeps its own variant byte, so a boxful of sand poured out has the grain it
+had in the ground rather than being re-rolled.
+
+### What can be collected
 
 The `capturable` flag in `Particles.gd` decides it, and nothing else does:
 
-| Can be carried | Cannot |
+| Can be collected | Cannot |
 |---|---|
 | Sand, Water, Lava, Ash, Rubble | Stone, Plant, Fire, Smoke, Steam, Ember |
 
 Loose matter can be gathered; terrain and living things cannot, and neither can
-fire or the gases, which are not things you close a hand around. Stone is
+fire or the gases, which are not things you scoop into a box. Stone is
 deliberately out - it has to be broken into Rubble with the breaker before any
 of it can be picked up, which is what makes digging something you do rather
 than something you skip. Ash has no despawn timer for the same reason: it is a
