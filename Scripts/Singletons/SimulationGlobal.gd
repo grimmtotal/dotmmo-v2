@@ -106,6 +106,7 @@ var _t_ids: Dictionary = {}
 var _t_move: PackedByteArray
 var _t_solid: PackedByteArray
 var _t_liquid: PackedByteArray
+var _t_capturable: PackedByteArray
 var _t_reactive: PackedByteArray
 var _t_density: PackedFloat32Array
 var _t_variants: PackedByteArray
@@ -179,6 +180,7 @@ func _build_types() -> void:
 	_t_move.resize(total)
 	_t_solid.resize(total)
 	_t_liquid.resize(total)
+	_t_capturable.resize(total)
 	_t_reactive.resize(total)
 	_t_density.resize(total)
 	_t_life_min.resize(total)
@@ -218,6 +220,7 @@ func _configure_type(id: int, config: Dictionary) -> void:
 
 	_t_solid[id] = 1 if solid else 0
 	_t_liquid[id] = 1 if liquid else 0
+	_t_capturable[id] = 1 if config.get("capturable", false) else 0
 	_t_density[id] = float(config.get("density", 1.0))
 	var spread: Vector2i = config.get("spread", Vector2i.ZERO)
 	_t_spread_x[id] = spread.x
@@ -411,6 +414,74 @@ func despawnParticle(pos: Vector2) -> int:
 	_erase(i)
 	_wake_around(i)
 	return 1
+
+
+func isVacant(pos: Vector2) -> bool:
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return false
+	return _type[(y + 1) * _pw + (x + 1)] == EMPTY
+
+
+## Lifts one particle out of the world and hands back everything needed to put
+## it down again: its type in the low byte, its variant byte in the next one.
+##
+## Returns 0 when the cell is empty, out of bounds, or holds something the hand
+## has no business picking up - terrain, a plant, fire or a gas. That is the
+## only gate on capture, so what can be carried is decided entirely by the
+## `capturable` flag in Particles.gd.
+##
+## A whole payload is a PackedInt32Array of these, which is what keeps carrying
+## a thousand grains cheap: no dictionary, no object, four bytes a grain.
+func captureParticle(pos: Vector2) -> int:
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return 0
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	var t: int = _type[i]
+	if t < FIRST_TYPE or _t_capturable[t] == 0:
+		return 0
+
+	var packed: int = t | (_variant[i] << 8)
+	_erase(i)
+	_wake_around(i)
+	return packed
+
+
+## Puts a captured particle back down. Fails if the cell is not empty, which is
+## what lets the hand check a whole payload for room before releasing any of it.
+func releaseParticle(pos: Vector2, packed: int) -> bool:
+	var id: int = packed & 0xFF
+	if id < FIRST_TYPE or id >= _t_variants.size():
+		return false
+
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return false
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	if _type[i] != EMPTY:
+		return false
+
+	_place(i, id, (packed >> 8) & 0xFF)
+	_wake_around(i)
+	return true
+
+
+## The colour a captured particle would be drawn with, for anything that has to
+## show a particle outside the world - the hand's ghost, most of all.
+func colorOf(packed: int) -> Color:
+	var id: int = packed & 0xFF
+	if id < FIRST_TYPE or id >= _t_variants.size():
+		return Color.MAGENTA
+
+	var variant: int = mini((packed >> 8) & VARIANT_MASK, _t_variants[id] - 1)
+	var rgba: int = _t_colours[_t_colour_base[id] + variant]
+	return Color8(rgba & 0xFF, (rgba >> 8) & 0xFF, (rgba >> 16) & 0xFF, (rgba >> 24) & 0xFF)
 
 
 ## Snapshot of a single cell for the inspector. Never called from the hot loop.
@@ -807,10 +878,15 @@ func _spawn_beside(i: int, id: int) -> void:
 
 # ------------------------------------------------------------ cell primitives
 
-func _place(i: int, id: int) -> void:
-	var variant: int = randi() % int(_t_variants[id])
+## `variant` is the whole packed byte - colour index and render seed - and is
+## rolled fresh when it is left at -1. The hand passes the byte it captured, so
+## a grain put back down is the same grain, in the same shade, and a dune keeps
+## its texture across the move instead of being re-rolled into a new one.
+func _place(i: int, id: int, variant: int = -1) -> void:
+	if variant < 0:
+		variant = (randi() % int(_t_variants[id])) | ((randi() % SEED_RANGE) << VARIANT_BITS)
 	_type[i] = id
-	_variant[i] = variant | ((randi() % SEED_RANGE) << VARIANT_BITS)
+	_variant[i] = variant
 	_life[i] = _roll(_t_life_min[id], _t_life_max[id])
 	_timer[i] = _roll(_t_every_min[id], _t_every_max[id])
 	_flow[i] = randi() & 1

@@ -101,6 +101,34 @@ toggle_mode = true
 text = "Inspect"
 tooltip_text = "Inspect a particle  (3)"
 
+[node name="Hand" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Hand"
+tooltip_text = "Grab loose matter and carry it. Click to fill the hand, click again to put it down.  (4)"
+
+[node name="Flame" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Flame"
+tooltip_text = "Flame gun  (5)"
+
+[node name="Steam" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Steam"
+tooltip_text = "Steam gun  (6)"
+
+[node name="Breaker" type="Button" parent="TopBar/Row/Tools"]
+layout_mode = 2
+custom_minimum_size = Vector2(72, 0)
+toggle_mode = true
+text = "Breaker"
+tooltip_text = "Break stone into carryable rubble  (7)"
+
 [node name="Sep2" type="VSeparator" parent="TopBar/Row"]
 layout_mode = 2
 
@@ -223,8 +251,9 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_hint")
 
 [node name="HintLabel" type="Label" parent="HintPanel"]
 layout_mode = 2
-text = "Drag  paint / erase          Scroll  zoom
-Middle-drag  pan            P  pause
-1 2 3  tools                [ ]  brush size"
+text = "Drag  paint / erase / fire        Scroll  zoom
+Click  grab / drop (Hand)         Middle-drag  pan
+1-7  tools                        [ ]  brush size
+P  pause"
 theme_override_colors/font_color = Color(0.62, 0.66, 0.74, 1)
 theme_override_font_sizes/font_size = 12

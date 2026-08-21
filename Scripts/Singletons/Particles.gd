@@ -24,6 +24,14 @@ const DEFAULTS = {
 	},
 	"solid": false,
 	"liquid": false,
+	# Whether the ghost hand can pick this up and carry it.
+	#
+	# Loose matter can be gathered and moved; terrain and living things cannot,
+	# and neither can fire or the gases, which are not things you close a hand
+	# around. Stone is deliberately out: it has to be broken into Rubble with
+	# the breaker before any of it can be carried, which is what makes digging
+	# a thing you do rather than a thing you skip.
+	"capturable": false,
 	"density": 1.0,
 	"spread": Vector2i(0, 0),
 	"interactions": {},
@@ -111,6 +119,7 @@ const TYPES = {
 		"colors": ["#e8c46a", "#c99a45"], # Pale Sand, Deep Sand
 		"look": {"grain": 0.10, "bevel": 0.30},
 		"solid": true,
+		"capturable": true,
 		"density": 1.5,
 		"interactions": {
 			"Water": {
@@ -134,6 +143,7 @@ const TYPES = {
 		"colors": ["#2f86e0", "#1c5da8"], # Surface Blue, Deep Blue
 		"look": {"grain": 0.05, "glow": 0.10, "bevel": 0.05, "alpha": 0.86},
 		"liquid": true,
+		"capturable": true,
 		"density": 1.0,
 		"interactions": {
 			"Fire": {
@@ -273,18 +283,17 @@ const TYPES = {
 		"initialGravity": Vector2(0, 0.3),
 		"colors": ["#3a3a40", "#2c2c31"], # Charcoal, Soot
 		"look": {"grain": 0.15, "bevel": 0.10, "alpha": 0.92},
+		"capturable": true,
 		"density": 0.5,
 		"interactions": {},
 		"idleBehaviors": {
 			"changeVelocity": Vector2.ZERO
 		},
-		"timers": {
-			"Life": {
-				"despawn": Vector2i(2500, 3500),
-				"spawn": [],
-				"changeVelocity": Vector2.ZERO
-			}
-		}
+		# No despawn timer: ash is something you gather and carry now, so a
+		# heap of it has to still be there when you come back for it. Dropping
+		# the timer also lets a buried heap fall out of the active list, which
+		# a despawning material can never do.
+		"timers": {}
 	},
 	"Ember": {
 		"initialGravity": Vector2(0, 0),
@@ -318,11 +327,35 @@ const TYPES = {
 			}
 		}
 	},
+	# Broken stone. The only way to carry rock: Stone itself is not capturable,
+	# so terrain has to be chewed into Rubble with the breaker before any of it
+	# can be picked up. Warmer and lighter than the slate it comes from, and
+	# heavily grained, so a pile of debris reads as debris at a glance.
+	"Rubble": {
+		"initialGravity": Vector2(0, 1),
+		"colors": ["#8a8578", "#6d6a60"], # Grit, Dark Grit
+		"look": {"grain": 0.18, "bevel": 0.28},
+		"solid": true,
+		"capturable": true,
+		"density": 1.8,
+		"interactions": {
+			"Lava": {
+				"spawn": [],
+				"destroy": true,
+				"resetTimers": []
+			}
+		},
+		"idleBehaviors": {
+			"changeVelocity": Vector2.ZERO
+		},
+		"timers": {}
+	},
 	"Lava": {
 		"initialGravity": Vector2(0, 1),
 		"colors": ["#ff9a2b", "#c22a10"], # Molten, Crust
 		"look": {"grain": 0.07, "glow": 0.55, "bevel": 0.06},
 		"liquid": true,
+		"capturable": true,
 		"density": 2.5,
 		"interactions": {},
 		"idleBehaviors": {
