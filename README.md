@@ -116,38 +116,81 @@ because they are things the character does in it.
 | 1 | Paint | *Editor.* Lays down the selected material across the brush |
 | 2 | Erase | *Editor.* Removes whatever the brush covers |
 | 3 | Inspect | *Editor.* Reads out a single particle |
-| 4 | Hand | *Held.* Picks matter up and carries it |
-| 5 | Flame gun | *Held.* Sprays fire |
-| 6 | Steam gun | *Held.* Sprays steam |
-| 7 | Breaker | *Held.* Chews stone into rubble |
+| 4 | Box | *Held.* Collects one material and carries it |
+| 5 | Flame gun | *Held.* Fires arcing fireballs |
+| 6 | Steam gun | *Held.* Fires steam |
+| 7 | Breaker | *Held.* Fires a round that breaks stone into rubble |
 
 Paint and erase work on the whole brush footprint every frame, which is what
-you want for laying down terrain. The guns instead fire a fixed number of
-particles per second into random cells of the footprint, so they read as a
-stream with gaps in it rather than a pour - a flame that looks like it is
-burning instead of being dumped.
+you want for laying down terrain. The guns are not area tools at all.
 
-### The hand
+### The guns are ballistic
 
-Click to fill the hand with everything capturable under the brush, click again
-to put it down. Held particles leave the simulation entirely - they do not fall
-or react while carried - and each one keeps its colour and render seed, so a
-carried dune lands as the same dune rather than a freshly rolled one.
+A fired particle cannot be a world cell while it is travelling. The simulation
+gives every material one fixed way of moving - fall, rise, flow, sit still -
+chosen from its type and shared by every grain of it, with no per-cell velocity
+anywhere in the grid to override it. Adding one would cost bytes on all 62,500
+cells and a branch in the hot loop, to serve the handful of grains that are ever
+actually in the air.
 
-Releasing is all or nothing. The ghost turns red the moment the destination
-cannot take the whole payload, and releasing there is refused: the hand keeps
-hold so you can move and try again. Nothing the hand picks up can be lost.
+So a shot lives outside the grid (`Scripts/Projectiles.gd`): a position, a
+velocity and a gravity of its own, with the simulation knowing nothing about it
+until it arrives. Each gun sets its own muzzle velocity, spread cone and flight
+gravity - negative for flame and steam, so they arc upward the way the materials
+themselves do.
 
-### What can be carried
+On impact the shot becomes an ordinary particle in the last cell it was clear
+of, which is what puts the simulation's own reactions in charge of the result:
+**nothing in the projectile code says a fireball into a plant bed sets it
+alight, or that one into water is quenched.** Those reactions already existed;
+a shot only has to deliver the material to the right cell.
+
+Landing uses `spawnExactly` rather than `spawnParticle`, because the ordinary
+spawn scatters by the material's `spread` - right for a reaction throwing off
+products, and wrong for something whose position the flight already decided.
+
+### The box
+
+A container you sweep through the world. Left-drag fills it, right-drag pours it
+back out.
+
+**The box takes one material at a time.** It has no filter until the first
+particle goes in, and that particle sets it: sweep into a bank of sand and the
+box is a sand box for as long as it holds any, ignoring the water and the rubble
+it passes over afterwards. That is the whole rule, and it is what makes a sweep
+predictable - you can drag through mixed ground without having to be careful
+about what else is under the mouth. The filter clears the moment the last
+particle leaves.
+
+**When the first sweep touches more than one material, the one nearest where you
+are pointing wins.** Nearest rather than first-found matters: a sweep that
+starts across a boundary would otherwise lock onto whichever cell the loop
+happened to reach first, which from the outside looks arbitrary - pointing at
+the sand and getting a box of water. The tooltip names what will be taken before
+you press, and the cell it will be taken from is outlined, so the choice is
+never a surprise.
+
+**Capacity comes from the brush size**, and the box draws its own fill level, so
+"how much have I got" is answered by looking at it. The mouth only reaches what
+it covers, so filling a box bigger than its footprint means dragging it across
+the ground rather than holding it still.
+
+Contents are not a picture of what was collected. The box is a container, not a
+snapshot: it holds a count, not a shape, which is why it can be filled from a
+dozen scattered cells and poured out somewhere entirely different. Each grain
+still keeps its own variant byte, so a boxful of sand poured out has the grain it
+had in the ground rather than being re-rolled.
+
+### What can be collected
 
 The `capturable` flag in `Particles.gd` decides it, and nothing else does:
 
-| Can be carried | Cannot |
+| Can be collected | Cannot |
 |---|---|
 | Sand, Water, Lava, Ash, Rubble | Stone, Plant, Fire, Smoke, Steam, Ember |
 
 Loose matter can be gathered; terrain and living things cannot, and neither can
-fire or the gases, which are not things you close a hand around. Stone is
+fire or the gases, which are not things you scoop into a box. Stone is
 deliberately out - it has to be broken into Rubble with the breaker before any
 of it can be picked up, which is what makes digging something you do rather
 than something you skip. Ash has no despawn timer for the same reason: it is a

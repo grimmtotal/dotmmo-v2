@@ -1,7 +1,7 @@
 extends Node2D
 
 ## The character you play as: a body that walks the world the sand falls
-## through, and the thing the hand and the guns now point from.
+## through, and the thing the box and the guns now point from.
 ##
 ## The body is deliberately smaller than a cell - 48 screen pixels against a
 ## 64-pixel block - which is what makes a block something you stand on, shelter
@@ -41,7 +41,7 @@ const LIQUID_GRAVITY: float = 0.22
 const LIQUID_DRAG: float = 6.0
 const SWIM_SPEED: float = -180.0
 
-## How far the hand and the guns reach, in cells. Short enough that getting to
+## How far the box reaches, in cells. Short enough that getting to
 ## somewhere is a real part of doing anything to it.
 const REACH_CELLS: int = 6
 
@@ -79,6 +79,12 @@ const STARTING_FILL: Dictionary = {
 const AIM_LINE: Color = Color(1, 1, 1, 0.22)
 const AIM_WIDTH: float = 2.0
 
+## How long the aim line runs for a tool with no reach limit. A gun's shot goes
+## as far as its flight takes it, so the line is a direction indicator rather
+## than a statement about range - drawing it out to the box's reach would be a
+## lie about where the shot lands.
+const AIM_RAY_CELLS: float = 3.5
+
 var velocity: Vector2 = Vector2.ZERO
 var cosmetics: CharacterCosmetics
 
@@ -90,6 +96,10 @@ var aiming: bool = false:
 			return
 		aiming = value
 		queue_redraw()
+
+## Whether the aim line should stop where the reach does. True for the box,
+## which can only touch what it can get to; false for the guns, which cannot.
+var aim_shows_reach: bool = true
 
 var _sprite: Sprite2D
 var _on_ground: bool = false
@@ -309,5 +319,8 @@ func _draw() -> void:
 		return
 
 	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var target: Vector2 = (target_cell() + Vector2(0.5, 0.5)) * scale
-	draw_line(to_local(centre()), to_local(target), AIM_LINE, AIM_WIDTH)
+	var from: Vector2 = centre()
+	var to: Vector2 = from + aim_direction() * AIM_RAY_CELLS * scale
+	if aim_shows_reach:
+		to = (target_cell() + Vector2(0.5, 0.5)) * scale
+	draw_line(to_local(from), to_local(to), AIM_LINE, AIM_WIDTH)

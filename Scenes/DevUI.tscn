@@ -101,12 +101,12 @@ toggle_mode = true
 text = "Inspect"
 tooltip_text = "Inspect a particle  (3)"
 
-[node name="Hand" type="Button" parent="TopBar/Row/Tools"]
+[node name="Box" type="Button" parent="TopBar/Row/Tools"]
 layout_mode = 2
 custom_minimum_size = Vector2(72, 0)
 toggle_mode = true
-text = "Hand"
-tooltip_text = "Grab loose matter and carry it. Click to fill the hand, click again to put it down.  (4)"
+text = "Box"
+tooltip_text = "Collect one material. Drag with the left button to fill, the right button to pour it back out. The first thing you pick up sets what the box will take.  (4)"
 
 [node name="Flame" type="Button" parent="TopBar/Row/Tools"]
 layout_mode = 2
@@ -252,7 +252,7 @@ theme_override_styles/panel = SubResource("StyleBoxFlat_hint")
 [node name="HintLabel" type="Label" parent="HintPanel"]
 layout_mode = 2
 text = "A D  walk                Space  jump / swim
-Drag  paint / erase / fire        Click  grab / drop (Hand)
+Drag  paint / erase / fire        Box  left-drag fills, right-drag pours
 1-3  editor tools        4-7  held tools
 Scroll  zoom        Middle-drag  look        P  pause"
 theme_override_colors/font_color = Color(0.62, 0.66, 0.74, 1)

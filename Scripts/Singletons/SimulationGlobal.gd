@@ -401,6 +401,31 @@ func spawnAt(id: int, x: int, y: int) -> bool:
 	return _spawn(i, id)
 
 
+## Spawns in exactly the cell asked for, skipping the material's spread jitter.
+##
+## `spawnParticle` scatters by the material's `spread`, which is right for a
+## reaction throwing off products and wrong for anything whose position has
+## already been decided: a shot's landing cell comes from its flight, and
+## jittering it afterwards would quietly undo the aiming.
+func spawnExactly(type_name: String, pos: Vector2) -> bool:
+	if not _t_ids.has(type_name):
+		push_error("Unknown particle type: ", type_name)
+		return false
+
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return false
+
+	var i: int = (y + 1) * _pw + (x + 1)
+	if _type[i] != EMPTY:
+		return false
+
+	_place(i, _t_ids[type_name])
+	_wake_around(i)
+	return true
+
+
 func despawnParticle(pos: Vector2) -> int:
 	var x: int = int(pos.x)
 	var y: int = int(pos.y)
@@ -442,10 +467,25 @@ func isVacant(pos: Vector2) -> bool:
 	return _type[(y + 1) * _pw + (x + 1)] == EMPTY
 
 
+## The type id at a cell if the box could take it, and 0 otherwise - empty,
+## out of bounds, or something the `capturable` flag rules out. Lets a caller
+## survey what it is pointing at without lifting anything.
+func capturableAt(pos: Vector2) -> int:
+	var x: int = int(pos.x)
+	var y: int = int(pos.y)
+	if x < 0 or y < 0 or x >= _w or y >= _h:
+		return 0
+
+	var t: int = _type[(y + 1) * _pw + (x + 1)]
+	if t < FIRST_TYPE or _t_capturable[t] == 0:
+		return 0
+	return t
+
+
 ## Lifts one particle out of the world and hands back everything needed to put
 ## it down again: its type in the low byte, its variant byte in the next one.
 ##
-## Returns 0 when the cell is empty, out of bounds, or holds something the hand
+## Returns 0 when the cell is empty, out of bounds, or holds something the box
 ## has no business picking up - terrain, a plant, fire or a gas. That is the
 ## only gate on capture, so what can be carried is decided entirely by the
 ## `capturable` flag in Particles.gd.
@@ -470,7 +510,7 @@ func captureParticle(pos: Vector2) -> int:
 
 
 ## Puts a captured particle back down. Fails if the cell is not empty, which is
-## what lets the hand check a whole payload for room before releasing any of it.
+## what lets a caller check for room before committing to putting anything down.
 func releaseParticle(pos: Vector2, packed: int) -> bool:
 	var id: int = packed & 0xFF
 	if id < FIRST_TYPE or id >= _t_variants.size():
@@ -491,7 +531,14 @@ func releaseParticle(pos: Vector2, packed: int) -> bool:
 
 
 ## The colour a captured particle would be drawn with, for anything that has to
-## show a particle outside the world - the hand's ghost, most of all.
+## show a particle outside the world - the box's fill level, most of all.
+## The name of a type id, for anything showing the player what a thing is.
+func typeName(id: int) -> String:
+	if id < FIRST_TYPE or id >= _t_name.size():
+		return ""
+	return _t_name[id]
+
+
 func colorOf(packed: int) -> Color:
 	var id: int = packed & 0xFF
 	if id < FIRST_TYPE or id >= _t_variants.size():
@@ -897,7 +944,7 @@ func _spawn_beside(i: int, id: int) -> void:
 # ------------------------------------------------------------ cell primitives
 
 ## `variant` is the whole packed byte - colour index and render seed - and is
-## rolled fresh when it is left at -1. The hand passes the byte it captured, so
+## rolled fresh when it is left at -1. The box passes the byte it captured, so
 ## a grain put back down is the same grain, in the same shade, and a dune keeps
 ## its texture across the move instead of being re-rolled into a new one.
 func _place(i: int, id: int, variant: int = -1) -> void:
