@@ -9,14 +9,19 @@ extends RefCounted
 ## cheap enough to send everyone in a world every player's exact look.
 ##
 ## A slot is deliberately tiny next to a world cell. A world cell is drawn at 64
-## screen pixels and a slot at 2, so a full body costs a few hundred blocks of
-## material to colour a figure 48 pixels tall. That ratio is the point: the
+## screen pixels and a slot at 4, so a full body costs a few hundred blocks of
+## material to colour a figure 96 pixels tall. That ratio is the point: the
 ## conspicuous waste is the status signal, and it explains itself without any UI.
 
 const Particles = preload("res://Scripts/Singletons/Particles.gd")
 
 ## Screen pixels per slot, and the body in slots. One particle fills one slot.
-const SLOT: int = 2
+##
+## SLOT is the one number that sets how big a character is drawn. It changes
+## nothing about what a body costs - capacity is measured in slots, so the same
+## 230 particles fill it at any scale - and Player derives its collision box from
+## it, so the body it walks with always matches the body you see.
+const SLOT: int = 4
 const BODY: Vector2i = Vector2i(24, 24)
 
 ## Segments, in slots. Left and right are the viewer's, not the character's.

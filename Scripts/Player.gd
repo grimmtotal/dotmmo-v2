@@ -17,13 +17,20 @@ extends Node2D
 
 const CharacterCosmetics = preload("res://Scripts/CharacterCosmetics.gd")
 
-## Collision box, in screen pixels. Narrower than the sprite on purpose: the
-## arms hang outside it, so a doorway you can see through is one you fit through.
-const BODY_WIDTH: float = 16.0
-const BODY_HEIGHT: float = 48.0
+## Collision box, in screen pixels, derived from the figure that gets drawn so
+## the two can never drift apart - change CharacterCosmetics.SLOT and the body
+## you walk with resizes along with the body you see.
+##
+## As wide as the torso rather than as wide as the sprite: the arms hang outside
+## the box on purpose, so a gap you can see through is one you fit through.
+const SPRITE_SIZE: Vector2 = Vector2(
+	CharacterCosmetics.BODY.x * CharacterCosmetics.SLOT,
+	CharacterCosmetics.BODY.y * CharacterCosmetics.SLOT)
+const BODY_WIDTH: float = 8.0 * CharacterCosmetics.SLOT
+const BODY_HEIGHT: float = SPRITE_SIZE.y
 
 ## Where the sprite sits relative to `position`, which is the middle of the feet.
-const SPRITE_OFFSET: Vector2 = Vector2(-24.0, -48.0)
+const SPRITE_OFFSET: Vector2 = Vector2(-SPRITE_SIZE.x * 0.5, -SPRITE_SIZE.y)
 
 const GRAVITY: float = 2200.0
 const MAX_FALL: float = 1400.0
@@ -50,6 +57,27 @@ const MAX_STEP: float = 1.0 / 30.0
 ## cell rather than exactly on the boundary, where a rounding error either way
 ## reads as either sinking in or floating.
 const SKIN: float = 0.01
+
+## How the body gets itself out when the world closes on it.
+##
+## Nothing tells the simulation the character is there, so matter falls straight
+## through it: stand under a sand shelf you have just dug out and the sand
+## settles inside your own collision box. Before this the body simply froze -
+## every direction it tried to move was blocked, both axes snapped and zeroed
+## their velocity, and that was permanent. It could not walk, fall or jump out.
+##
+## So each frame starts by checking whether the body is inside anything, and if
+## it is, looking for a position that is clear - exhausting every distance
+## upward before it will consider any other direction.
+##
+## Up wins outright rather than merely winning ties, and that ordering is the
+## whole safety property. Taking the nearest escape instead sounds better and is
+## not: a body embedded in a thin floor has open air a short way down and solid
+## ground a long way up, so nearest drops it through the floor. Preferring up
+## absolutely means the only way to be pushed downward is for there to be no way
+## up at all within reach.
+const UNSTICK_STEP: float = 4.0
+const UNSTICK_REACH_CELLS: float = 4.0
 
 ## What a fresh character is wearing. The empty body is only an outline - by
 ## design, so a half-filled limb reads as a vessel someone is still filling -
@@ -101,8 +129,9 @@ func refresh_appearance() -> void:
 
 func _physics_process(delta: float) -> void:
 	var step: float = minf(delta, MAX_STEP)
-	var in_liquid: bool = _is_submerged()
+	_unstick()
 
+	var in_liquid: bool = _is_submerged()
 	_apply_input(step, in_liquid)
 	_apply_gravity(step, in_liquid)
 
@@ -143,26 +172,65 @@ func _apply_gravity(step: float, in_liquid: bool) -> void:
 	velocity.y = minf(velocity.y + GRAVITY * step, MAX_FALL)
 
 
-## Moves horizontally, snapping to the edge of whatever it runs into. The body
-## is narrower than a cell, so a blocked move can only ever be against one
-## boundary and the correction is exact.
+## Looks for the nearest clear position when the body is inside something, and
+## does nothing at all when it is not - which is every ordinary frame.
+func _unstick() -> void:
+	if not _blocked(position):
+		return
+
+	var reach: float = UNSTICK_REACH_CELLS * float(Global.WORLD_PIXEL_SCALE)
+	var steps: int = int(reach / UNSTICK_STEP)
+
+	# Every distance upward first. Matter falls, so overhead is nearly always
+	# where the room is, and coming out on top of what buried you reads as
+	# climbing out.
+	for i: int in range(1, steps + 1):
+		var lift: float = float(i) * UNSTICK_STEP
+		if not _blocked(position - Vector2(0.0, lift)):
+			position.y -= lift
+			velocity.y = minf(velocity.y, 0.0)
+			return
+
+	# Then sideways, nearer side first, for a body pinned under a solid ceiling.
+	for i: int in range(1, steps + 1):
+		var shift: float = float(i) * UNSTICK_STEP
+		if not _blocked(position + Vector2(shift, 0.0)):
+			position.x += shift
+			return
+		if not _blocked(position - Vector2(shift, 0.0)):
+			position.x -= shift
+			return
+
+	# Downward only when there is no way up or out at all.
+	for i: int in range(1, steps + 1):
+		var drop: float = float(i) * UNSTICK_STEP
+		if not _blocked(position + Vector2(0.0, drop)):
+			position.y += drop
+			return
+
+
+## Moves along one axis in hops no longer than half a cell, so a fast move
+## cannot pass through a block without being tested against it, and stops dead
+## at the face of the first thing it meets.
 func _move_x(amount: float) -> void:
 	if is_zero_approx(amount):
 		return
 
 	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var target: float = position.x + amount
-	if not _blocked(Vector2(target, position.y)):
-		position.x = target
-		return
+	for hop: float in _hops(amount, scale):
+		var target: float = position.x + hop
+		if not _blocked(Vector2(target, position.y)):
+			position.x = target
+			continue
 
-	if amount > 0.0:
-		position.x = floorf((target + BODY_WIDTH * 0.5) / scale) * scale \
-				- BODY_WIDTH * 0.5 - SKIN
-	else:
-		position.x = (floorf((target - BODY_WIDTH * 0.5) / scale) + 1.0) * scale \
-				+ BODY_WIDTH * 0.5 + SKIN
-	velocity.x = 0.0
+		if hop > 0.0:
+			position.x = floorf((target + BODY_WIDTH * 0.5) / scale) * scale \
+					- BODY_WIDTH * 0.5 - SKIN
+		else:
+			position.x = (floorf((target - BODY_WIDTH * 0.5) / scale) + 1.0) * scale \
+					+ BODY_WIDTH * 0.5 + SKIN
+		velocity.x = 0.0
+		return
 
 
 func _move_y(amount: float) -> void:
@@ -170,18 +238,30 @@ func _move_y(amount: float) -> void:
 		return
 
 	var scale: float = float(Global.WORLD_PIXEL_SCALE)
-	var target: float = position.y + amount
-	if not _blocked(Vector2(position.x, target)):
-		position.y = target
+	for hop: float in _hops(amount, scale):
+		var target: float = position.y + hop
+		if not _blocked(Vector2(position.x, target)):
+			position.y = target
+			continue
+
+		if hop > 0.0:
+			position.y = floorf(target / scale) * scale - SKIN
+			_on_ground = true
+		else:
+			position.y = (floorf((target - BODY_HEIGHT) / scale) + 1.0) * scale \
+					+ BODY_HEIGHT + SKIN
+		velocity.y = 0.0
 		return
 
-	if amount > 0.0:
-		position.y = floorf(target / scale) * scale - SKIN
-		_on_ground = true
-	else:
-		position.y = (floorf((target - BODY_HEIGHT) / scale) + 1.0) * scale \
-				+ BODY_HEIGHT + SKIN
-	velocity.y = 0.0
+
+## Splits a move into equal hops of at most half a cell.
+func _hops(amount: float, scale: float) -> PackedFloat32Array:
+	var count: int = maxi(1, ceili(absf(amount) / (scale * 0.5)))
+	var hop: float = amount / float(count)
+	var out := PackedFloat32Array()
+	out.resize(count)
+	out.fill(hop)
+	return out
 
 
 ## The body's box with its feet at `feet`.

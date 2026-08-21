@@ -82,13 +82,36 @@ You play as a body that walks the world the sand falls through
 (`Scripts/Player.gd`). A D or the arrow keys walk, Space jumps, and the mouse
 aims.
 
-The body is deliberately smaller than a cell - 48 screen pixels against a
-64-pixel block - which is what makes a block something you stand on, shelter
-behind or have to break, rather than something you wade through. It also makes
-collision cheap: a body that size can never straddle more than two cells on an
-axis, so resolving a move is a snap to a cell edge rather than a search. Solid
-cells block; liquids do not, so you sink into water rather than standing on it,
-slowed by drag, with the jump key working as a swim stroke.
+The body is 96 screen pixels tall against a 64-pixel block, so it stands a block
+and a half high and a doorway has to be two blocks tall to walk through. Its size
+comes from `CharacterCosmetics.SLOT` and the collision box is derived from it, so
+the body you walk with and the body you see can never drift apart - change that
+one constant and both resize together. Filling a character still costs the same
+230 particles at any scale, because capacity is measured in slots.
+
+Solid cells block; liquids do not, so you sink into water rather than standing on
+it, slowed by drag, with the jump key working as a swim stroke. A move is walked
+in hops of at most half a cell, so nothing can travel far enough in one frame to
+pass through a block without being tested against it.
+
+### Getting unstuck
+
+Nothing tells the simulation the character is there, so **matter falls straight
+through it**. Stand under a sand shelf you have just dug out and the sand settles
+inside your own collision box.
+
+That used to be fatal, and permanently so: every direction the body tried to move
+was blocked, both axes snapped and zeroed their velocity, and it could not walk,
+fall or jump out ever again. One cell of sand was enough.
+
+So each frame begins by asking whether the body is inside anything, and if it is,
+looking for a position that is clear. **Up wins outright rather than merely
+winning ties**, and that ordering is the whole safety property: taking the
+nearest escape sounds better and is not, because a body embedded in a thin floor
+has open air a short way down and solid ground a long way up, so nearest drops it
+through the floor. Every distance upward is exhausted first, then sideways, and
+downward only when there is no way up or out at all. On an ordinary frame the
+body is not inside anything and the check costs one test.
 
 Nothing about the body is simulated as particles. It moves as one rigid box
 against the cell grid. Its *appearance* is the only part made of materials:
